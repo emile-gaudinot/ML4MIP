@@ -4,13 +4,19 @@
 ## TODOS
 
 ### Segmentation
-- [ ] nnUNet
-- [ ] UNETR
+- [ ] nnUNet (Nick)
+- [ ] UNETR (Philipp)
+- [ ] regular Unet (Mika)
+- [ ] Vision Transformer, (Medsam) (finetune) 
 
-- 2D and 3D approach
+- 2D and 3D approach 
 
 Centerline loss
 ### Graph Extraction
+
+Graph Extraction
+
+- Further Graph Extraction
 
 
 
