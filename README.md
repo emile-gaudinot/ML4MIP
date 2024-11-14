@@ -1,5 +1,6 @@
 # ML4MIP
 
+Regular Meeting: Thursday, 4pm - 6pm
 
 ## TODOS
 
