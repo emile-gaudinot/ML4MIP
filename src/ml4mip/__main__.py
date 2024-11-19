@@ -3,7 +3,7 @@ from pathlib import Path
 
 # import sys
 
-LOG_DIR = Path("./group/cake/logs")
+LOG_DIR = Path("/group/cake/ML4MIP/logs")
 # Configure logging to output to stdout
 # Configure logging to write to a file
 logging.basicConfig(
@@ -25,20 +25,20 @@ from ml4mip import trainer
 from ml4mip.dataset import NiftiDataset
 
 
-def unetr_finetuning():
+def main():
     logging.info("Starting unetr finetuning script")
-    model_dir = Path("./group/cake") / "models"
+    model_dir = Path("/group/cake/ML4MIP/models")
 
     model_path = model_dir / "UNETR_model_best_acc.pt"
     # !ls data/training_data/
-    data_dir = Path("data/training_data")
+    data_dir = Path("/data/training_data")
     print(model_dir, model_dir.exists())
     print(model_path, model_path.exists())
     print(data_dir, data_dir.exists())
 
-    batch_size = 1
+    batch_size = 4
     lr = 1e-4
-    num_epochs = 1
+    num_epochs = 10
 
     transforms = Compose(
         [
@@ -64,14 +64,17 @@ def unetr_finetuning():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    dataset_size = len(train_ds)
-    subset_size = int(0.1 * dataset_size)  # Use 10% of the dataset
-    subset_indices = torch.randperm(dataset_size)[:subset_size]
-    train_subset = Subset(train_ds, subset_indices)
+    # dataset_size = len(train_ds)
+    # subset_size = int(0.1 * dataset_size)  # Use 10% of the dataset
+    # subset_indices = torch.randperm(dataset_size)[:subset_size]
+    # train_subset = Subset(train_ds, subset_indices)
+    
+    ds = train_ds
+    # ds = train_subset
+    logging.info(f"Training on {len(ds)} samples")
 
-    logging.info(f"Training on {len(train_subset)} samples")
-
-    train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True, pin_memory=True)
+    
+    train_loader = DataLoader(ds, batch_size=batch_size, shuffle=True, pin_memory=True)
 
     # val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
     # Model and optimizer
@@ -90,4 +93,4 @@ def unetr_finetuning():
 
 
 if __name__ == "__main__":
-    unetr_finetuning()
+    main()
