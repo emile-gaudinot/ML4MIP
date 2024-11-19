@@ -123,10 +123,14 @@ def finetune(
         scheduler: Learning rate scheduler (optional).
     """
     for epoch in range(num_epochs):
+        msg = f"Epoch {epoch + 1}/{num_epochs}: training..."
+        logger.info(msg)
         # Train for one epoch
         train_loss = train_one_epoch(model, train_loader, optimizer, loss_fn, device)
 
         if val_loader is not None:
+            msg = f"Epoch {epoch + 1}/{num_epochs}: validation..."
+            logger.info(msg)
             # Validate
             val_loss, val_dice = validate(model, val_loader, loss_fn, dice_metric, device)
 
