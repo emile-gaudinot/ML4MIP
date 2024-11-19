@@ -1,10 +1,17 @@
 from collections.abc import Callable
 from pathlib import Path
 
-import nibabel as nib
 import numpy as np
 import torch
 import torch.nn.functional as F
+from monai.transforms import (
+    Compose,
+    EnsureChannelFirstd,
+    LoadImaged,
+    Resized,
+    ScaleIntensityd,
+    ToTensord,
+)
 from torch.utils.data import Dataset
 
 
@@ -29,6 +36,7 @@ class NiftiDataset(Dataset):
         self.image_suffix: str = image_suffix
         self.mask_suffix: str = mask_suffix
         self.transform: Callable | None = transform
+        self.loader = LoadImaged(keys=["image", "mask"])
 
         # Collect image and mask file paths
         self.image_files: list[Path] = sorted(self.data_dir.glob(f"*{self.image_suffix}"))
@@ -39,39 +47,63 @@ class NiftiDataset(Dataset):
             self.mask_files
         ), "Number of image files and mask files must match."
         for img, mask in zip(self.image_files, self.mask_files, strict=False):
-            assert (
-                img.name.split(".")[0] == mask.name.split(".")[0]
+            # print(img.name.replace(image_suffix, ""))
+            # print(mask.name.replace(mask_suffix, ""))
+            assert img.name.replace(image_suffix, "") == mask.name.replace(
+                mask_suffix, ""
             ), f"Image file {img} and mask file {mask} do not match."
 
     def __len__(self) -> int:
         return len(self.image_files)
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
-        # Load image and mask
-        img: np.ndarray = nib.load(self.image_files[idx]).get_fdata()
-        mask: np.ndarray = nib.load(self.mask_files[idx]).get_fdata()
+        data_dict = {
+            "image": self.image_files[idx],
+            "mask": self.mask_files[idx],
+        }
 
-        # Ensure correct shapes
-        img = np.asarray(img, dtype=np.float32)
-        mask = np.asarray(mask, dtype=np.float32)
+        # Load images and metadata
+        loaded_data = self.loader(data_dict)
 
-        # Apply transforms if provided
+        # Apply additional transformations if provided
         if self.transform:
-            transformed: dict = self.transform(image=img, mask=mask)
-            img, mask = transformed["image"], transformed["mask"]
+            loaded_data = self.transform(loaded_data)
 
-        # Convert to PyTorch tensors
-        img_tensor: torch.Tensor = torch.tensor(img, dtype=torch.float32)
-        mask_tensor: torch.Tensor = torch.tensor(mask, dtype=torch.float32)
+        # Extract the transformed image and mask
+        img = loaded_data["image"]
+        mask = loaded_data["mask"]
 
-        return img_tensor, mask_tensor
+        return img, mask
 
 
-def transform(image: np.ndarray, mask: np.ndarray) -> dict[str, np.ndarray]:
+transforms = Compose(
+    [
+        EnsureChannelFirstd(keys=["image", "mask"]),
+        # Spacingd(keys=["image", "mask"], pixdim=(1.5, 1.5, 2.0), mode=("bilinear", "nearest")),
+        ScaleIntensityd(keys=["image"]),
+        Resized(
+            keys=["image", "mask"],
+            spatial_size=(96, 96, 96),
+            mode=("trilinear", "nearest"),  # 'trilinear' for image, 'nearest' for mask
+            align_corners=(True, None),  # 'align_corners' is only relevant for 'trilinear' mode
+        ),
+        ToTensord(keys=["image", "mask"]),
+    ]
+)
+
+
+def transform_resize(
+    data: dict[str, np.ndarray], target_shape=(96, 96, 96)
+) -> dict[str, np.ndarray]:
     """Apply transformations to the image and mask."""
     # Resize to a target shape
-    image = resize(image, target_shape=(96, 96, 96))
-    mask = resize(mask, target_shape=(96, 96, 96), binary=True)
+
+    if "image" not in data or "mask" not in data:
+        msg = "Data must contain both 'image' and 'mask' keys."
+        raise ValueError(msg)
+
+    image = resize(data["image"], target_shape=target_shape)
+    mask = resize(data["mask"], target_shape=target_shape, binary=True)
 
     return {"image": image, "mask": mask}
 

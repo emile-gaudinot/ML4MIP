@@ -9,6 +9,7 @@ authors = [
     { name = "Nick Pralle" },
     { name = "Philipp von Mengersen" },
     { name = "Mika" },
+    { name = "Emile" }
 ]
 description = 'Machine Learning for Medical Imaging'
 readme = "README.md"
