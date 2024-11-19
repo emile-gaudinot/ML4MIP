@@ -1,5 +1,5 @@
-import os
 from logging import getLogger
+from pathlib import Path
 
 import torch
 
@@ -10,9 +10,9 @@ from monai.metrics import DiceMetric
 from monai.transforms import Compose, EnsureChannelFirstd, Resized, ScaleIntensityd, ToTensord
 from torch import nn, optim
 from torch.utils.data import DataLoader
-from pathlib import Path
-from ml4mip.dataset import NiftiDataset, transform_resize
 from tqdm import tqdm
+
+from ml4mip.dataset import NiftiDataset
 
 logger = getLogger(__name__)
 
@@ -37,9 +37,12 @@ def train_one_epoch(
     Returns:
         float: The average training loss for the epoch.
     """
+    model.to(device)
     model.train()
     epoch_loss = 0.0
-    for batch in tqdm(train_loader):
+    progress_bar = tqdm(train_loader, desc="Training", unit="batch")
+
+    for batch in progress_bar:
         images, masks = batch
         images, masks = images.to(device), masks.to(device)
         optimizer.zero_grad()
@@ -53,6 +56,7 @@ def train_one_epoch(
         optimizer.step()
 
         epoch_loss += loss.item()
+        progress_bar.set_postfix({"Batch Loss": loss.item()})
     return epoch_loss / len(train_loader)
 
 
@@ -76,6 +80,7 @@ def validate(
     Returns:
         tuple[float, float]: Average validation loss and Dice score.
     """
+    model.to(device)
     model.eval()
     val_loss = 0.0
     dice_metric.reset()
