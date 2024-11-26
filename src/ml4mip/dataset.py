@@ -1,10 +1,13 @@
 import random
 from collections.abc import Callable
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+from hydra.core.config_store import ConfigStore
 from monai.transforms import (
     Compose,
     EnsureChannelFirstd,
@@ -13,14 +16,8 @@ from monai.transforms import (
     ScaleIntensityd,
     ToTensord,
 )
-from torch.utils.data import Dataset
-
-from dataclasses import dataclass
-from enum import Enum
-
-import torch
 from omegaconf import MISSING
-from hydra.core.config_store import ConfigStore
+from torch.utils.data import Dataset
 
 
 class TransformType(Enum):

@@ -1,12 +1,12 @@
 import logging
 
+import mlflow
 import torch
 from monai.inferers import sliding_window_inference
 from monai.metrics import DiceMetric
 from torch import nn, optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-import mlflow
 
 logger = logging.getLogger(__name__)
 
