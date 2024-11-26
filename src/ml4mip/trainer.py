@@ -78,7 +78,7 @@ def validate(
         device: The device to run validation on.
 
     Returns:
-        tuple[float, float]: Average validation loss and Dice score.
+        Average validation loss and Dice score.
     """
     model.to(device)
     model.eval()
@@ -94,7 +94,10 @@ def validate(
             dice_metric(y_pred=outputs, y=masks)
     avg_dice = dice_metric.aggregate().item()
     dice_metric.reset()
-    return val_loss / len(val_loader), avg_dice
+    return {
+        "val_loss": val_loss / len(val_loader),
+        "avg_dice": avg_dice,
+    }
 
 
 # --- FINE-TUNING FUNCTION ---

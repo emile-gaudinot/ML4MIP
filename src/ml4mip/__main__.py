@@ -14,18 +14,20 @@ logging.basicConfig(
 )
 
 
+import argparse
+
 import torch
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
 from monai.transforms import Compose, EnsureChannelFirstd, Resized, ScaleIntensityd, ToTensord
 from torch import optim
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 
 from ml4mip import trainer
 from ml4mip.dataset import NiftiDataset
 
 
-def main():
+def finetune_unetr():
     logging.info("Starting unetr finetuning script")
     model_dir = Path("/group/cake/ML4MIP/models")
 
@@ -57,26 +59,23 @@ def main():
 
     train_ds = NiftiDataset(
         data_dir,
-        # image_suffix="_avg.nii.gz",
-        # mask_suffix="_avg_seg.nii.gz",
         transform=transforms,
+        train=True,
+    )
+    val_ds = NiftiDataset(
+        data_dir,
+        transform=transforms,
+        train=False,
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # dataset_size = len(train_ds)
-    # subset_size = int(0.1 * dataset_size)  # Use 10% of the dataset
-    # subset_indices = torch.randperm(dataset_size)[:subset_size]
-    # train_subset = Subset(train_ds, subset_indices)
-    
-    ds = train_ds
-    # ds = train_subset
-    logging.info(f"Training on {len(ds)} samples")
+    msg = f"Training on {len(train_ds)} samples"
+    logging.info(msg)
 
-    
-    train_loader = DataLoader(ds, batch_size=batch_size, shuffle=True, pin_memory=True)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, pin_memory=True)
 
-    # val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, pin_memory=True)
     # Model and optimizer
     model = torch.jit.load(model_path, map_location=device)
     model = model.to(device)
@@ -85,11 +84,94 @@ def main():
     dice_metric = DiceMetric(include_background=True, reduction="mean")
 
     # Fine-tuning
-    trainer.finetune(model, train_loader, optimizer, loss_fn, dice_metric, device, num_epochs)
+    trainer.finetune(
+        model,
+        train_loader,
+        optimizer,
+        loss_fn,
+        dice_metric,
+        device,
+        num_epochs,
+        val_loader=val_loader,
+    )
     # Save the final model
     model_dir = Path(model_dir)
     model_dir.mkdir(parents=True, exist_ok=True)
     torch.save(model.state_dict(), model_dir / "fine_tuned_model.pt")
+
+
+def evaluate_unetr():
+    logging.info("Starting unetr evaluation script")
+    model_dir = Path("/group/cake/ML4MIP/models")
+    msg = f"Model directory: {model_dir} ({model_dir.exists()})"
+
+    model_path = model_dir / "fine_tuned_model.pt"
+    msg = f"Model path: {model_path} ({model_path.exists()})"
+    # !ls data/training_data/
+    data_dir = Path("/data/training_data")
+    msg = f"Data directory: {data_dir} ({data_dir.exists()})"
+
+    batch_size = 4
+
+    transforms = Compose(
+        [
+            EnsureChannelFirstd(keys=["image", "mask"]),
+            # Spacingd(keys=["image", "mask"], pixdim=(1.5, 1.5, 2.0), mode=("bilinear", "nearest")),
+            ScaleIntensityd(keys=["image"]),
+            Resized(
+                keys=["image", "mask"],
+                spatial_size=(96, 96, 96),
+                mode=("trilinear", "nearest"),  # 'trilinear' for image, 'nearest' for mask
+                align_corners=(True, None),  # 'align_corners' is only relevant for 'trilinear' mode
+            ),
+            ToTensord(keys=["image", "mask"]),
+        ]
+    )
+
+    val_ds = NiftiDataset(
+        data_dir,
+        transform=transforms,
+        train=False,
+    )
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    msg = f"Evaluating on {len(val_ds)} samples"
+    logging.info(msg)
+
+    loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, pin_memory=True)
+
+    # Model and optimizer
+    model = torch.jit.load(model_path, map_location=device)
+    model = model.to(device)
+    loss_fn = DiceCELoss(to_onehot_y=True, softmax=True)
+    dice_metric = DiceMetric(include_background=True, reduction="mean")
+
+    # Evaluation
+    result = trainer.validate(model, loader, loss_fn, dice_metric, device)
+    msg = f"Validation Dice: {result['avg_dice']:.4f} | Validation Loss: {result['val_loss']:.4f}"
+    logging.info(msg)
+
+
+def main():
+    # Initialize the argument parser
+    parser = argparse.ArgumentParser(description="Choose to train or evaluate the model.")
+
+    # Add arguments for mode
+    parser.add_argument(
+        "mode",
+        choices=["train", "evaluate"],
+        help="Select 'train' to train the model or 'evaluate' to evaluate the model.",
+    )
+
+    # Parse the arguments
+    args = parser.parse_args()
+
+    # Call the appropriate function based on the mode
+    if args.mode == "train":
+        finetune_unetr()
+    elif args.mode == "evaluate":
+        evaluate_unetr()
 
 
 if __name__ == "__main__":

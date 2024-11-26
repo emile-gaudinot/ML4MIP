@@ -1,3 +1,4 @@
+import random
 from collections.abc import Callable
 from pathlib import Path
 
@@ -31,6 +32,8 @@ class NiftiDataset(Dataset):
         image_suffix: str = ".img.nii.gz",
         mask_suffix: str = ".label.nii.gz",
         transform: Callable | None = None,
+        train: bool = True,
+        split_ratio: float = 0.9,
     ) -> None:
         self.data_dir: Path = Path(data_dir)
         self.image_suffix: str = image_suffix
@@ -39,19 +42,33 @@ class NiftiDataset(Dataset):
         self.loader = LoadImaged(keys=["image", "mask"])
 
         # Collect image and mask file paths
-        self.image_files: list[Path] = sorted(self.data_dir.glob(f"*{self.image_suffix}"))
-        self.mask_files: list[Path] = sorted(self.data_dir.glob(f"*{self.mask_suffix}"))
+        image_files: list[Path] = sorted(self.data_dir.glob(f"*{self.image_suffix}"))
+        mask_files: list[Path] = sorted(self.data_dir.glob(f"*{self.mask_suffix}"))
+
+        # Split the dataset into training and validation sets
+        data_files = list(zip(image_files, mask_files, strict=True))
+        data_files = self.get_sample(data_files, train=train, split_ratio=split_ratio)
+        self.image_files, self.mask_files = zip(*data_files, strict=True)
 
         # Ensure image and mask files match
-        assert len(self.image_files) == len(
-            self.mask_files
-        ), "Number of image files and mask files must match."
+        assert len(self.image_files) == len(self.mask_files), "Number of image files and mask files must match."
         for img, mask in zip(self.image_files, self.mask_files, strict=False):
-            # print(img.name.replace(image_suffix, ""))
-            # print(mask.name.replace(mask_suffix, ""))
             assert img.name.replace(image_suffix, "") == mask.name.replace(
                 mask_suffix, ""
             ), f"Image file {img} and mask file {mask} do not match."
+
+    @staticmethod
+    def get_sample(
+        data_files: list[tuple[Path, Path]],
+        train: bool = True,
+        split_ratio: float = 0.9,
+    ):
+        random.seed(42)
+        num_train = int(len(data_files) * split_ratio)
+        all_indices = list(range(len(data_files)))
+        train_indices = random.sample(all_indices, num_train)
+        val_indices = list(set(all_indices) - set(train_indices))
+        return [data_files[i] for i in (train_indices if train else val_indices)]
 
     def __len__(self) -> int:
         return len(self.image_files)
@@ -92,9 +109,7 @@ transforms = Compose(
 )
 
 
-def transform_resize(
-    data: dict[str, np.ndarray], target_shape=(96, 96, 96)
-) -> dict[str, np.ndarray]:
+def transform_resize(data: dict[str, np.ndarray], target_shape=(96, 96, 96)) -> dict[str, np.ndarray]:
     """Apply transformations to the image and mask."""
     # Resize to a target shape
 
@@ -127,9 +142,7 @@ def resize(
     data_tensor = torch.tensor(data).unsqueeze(0).unsqueeze(0)  # Shape: [1, 1, D, H, W]
 
     # Resize to target shape
-    resized_tensor = F.interpolate(
-        data_tensor, size=target_shape, mode="trilinear", align_corners=False
-    )
+    resized_tensor = F.interpolate(data_tensor, size=target_shape, mode="trilinear", align_corners=False)
 
     if binary:
         resized_tensor = resized_tensor >= threshold  # Apply thresholding
