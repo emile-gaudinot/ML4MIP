@@ -17,6 +17,7 @@ from ml4mip import trainer
 from ml4mip.dataset import DatasetConfig, get_dataset
 from ml4mip.models import ModelConfig, get_model
 from ml4mip.utils.torch import save_model
+from omegaconf import OmegaConf
 
 logger = logging.getLogger(__name__)
 
@@ -94,8 +95,8 @@ def run_training(cfg: TrainingConfig) -> None:
         mlflow.log_param("batch_size", cfg.batch_size)
         mlflow.log_param("learning_rate", cfg.lr)
         mlflow.log_param("num_epochs", cfg.num_epochs)
-        mlflow.log_dict(cfg.model, "model_config.yaml")
-        mlflow.log_dict(cfg.dataset, "dataset_config.yaml")
+        mlflow.log_dict(OmegaConf.to_yaml(cfg.model), "model_config.yaml")
+        mlflow.log_dict(OmegaConf.to_yaml(cfg.dataset), "dataset_config.yaml")
 
         # Train the model and log metrics
         trainer.train(
