@@ -1,0 +1,8 @@
+defaults:
+  - base_eval
+  - dataset: default        # Default dataset configuration
+  - model: unetr            # Default model configuration
+
+
+batch_size: 1
+ml_flow_uri: "file://${hydra:runtime.cwd}/runs"

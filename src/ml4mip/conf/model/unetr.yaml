@@ -1,0 +1,7 @@
+defaults:
+  - base_model
+
+model_type: UNETR_PTR
+model_path: null
+base_model_jit_path: ${hydra:runtime.cwd}/models/UNETR_model_best_acc.pt
+

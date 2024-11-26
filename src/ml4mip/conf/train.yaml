@@ -1,0 +1,14 @@
+defaults:
+  - base_train
+  - dataset: default        # Default dataset configuration
+  - model: unetr            # Default model configuration
+
+# Base training configuration
+
+batch_size: 4
+lr: 1e-4
+num_epochs: 20
+ml_flow_uri: "file://${hydra:runtime.cwd}/runs"
+model_dir: ${hydra:runtime.cwd}/models
+model_tag: "finetuned.pt"
+

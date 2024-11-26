@@ -15,6 +15,46 @@ from monai.transforms import (
 )
 from torch.utils.data import Dataset
 
+from dataclasses import dataclass
+from enum import Enum
+
+import torch
+from omegaconf import MISSING
+from hydra.core.config_store import ConfigStore
+
+
+class TransformType(Enum):
+    RESIZE_96 = "resize_96"
+
+
+@dataclass
+class DatasetConfig:
+    data_dir: str = MISSING
+    image_suffix: str = ".img.nii.gz"
+    mask_suffix: str = ".label.nii.gz"
+    transform: TransformType = MISSING
+    train: bool = True
+    split_ratio: float = 0.9
+
+
+_cs = ConfigStore.instance()
+_cs.store(
+    group="dataset",
+    name="base_dataset",
+    node=DatasetConfig,
+)
+
+
+def get_dataset(cfg: DatasetConfig):
+    return NiftiDataset(
+        cfg.data_dir,
+        image_suffix=cfg.image_suffix,
+        mask_suffix=cfg.mask_suffix,
+        transform=get_transform(cfg.transform),
+        train=cfg.train,
+        split_ratio=cfg.split_ratio,
+    )
+
 
 class NiftiDataset(Dataset):
     """PyTorch Dataset for loading 3D NIfTI images and masks from a directory.
@@ -51,7 +91,9 @@ class NiftiDataset(Dataset):
         self.image_files, self.mask_files = zip(*data_files, strict=True)
 
         # Ensure image and mask files match
-        assert len(self.image_files) == len(self.mask_files), "Number of image files and mask files must match."
+        assert len(self.image_files) == len(
+            self.mask_files
+        ), "Number of image files and mask files must match."
         for img, mask in zip(self.image_files, self.mask_files, strict=False):
             assert img.name.replace(image_suffix, "") == mask.name.replace(
                 mask_suffix, ""
@@ -93,7 +135,16 @@ class NiftiDataset(Dataset):
         return img, mask
 
 
-transforms = Compose(
+def get_transform(type_: TransformType) -> Callable:
+    """Get the transformation function based on the type."""
+    if type_ == TransformType.RESIZE_96:
+        return transform_resize_96
+
+    msg = f"Invalid transform type: {type_}"
+    raise ValueError(msg)
+
+
+transform_resize_96 = Compose(
     [
         EnsureChannelFirstd(keys=["image", "mask"]),
         # Spacingd(keys=["image", "mask"], pixdim=(1.5, 1.5, 2.0), mode=("bilinear", "nearest")),
@@ -109,7 +160,9 @@ transforms = Compose(
 )
 
 
-def transform_resize(data: dict[str, np.ndarray], target_shape=(96, 96, 96)) -> dict[str, np.ndarray]:
+def transform_resize(
+    data: dict[str, np.ndarray], target_shape=(96, 96, 96)
+) -> dict[str, np.ndarray]:
     """Apply transformations to the image and mask."""
     # Resize to a target shape
 
@@ -142,7 +195,9 @@ def resize(
     data_tensor = torch.tensor(data).unsqueeze(0).unsqueeze(0)  # Shape: [1, 1, D, H, W]
 
     # Resize to target shape
-    resized_tensor = F.interpolate(data_tensor, size=target_shape, mode="trilinear", align_corners=False)
+    resized_tensor = F.interpolate(
+        data_tensor, size=target_shape, mode="trilinear", align_corners=False
+    )
 
     if binary:
         resized_tensor = resized_tensor >= threshold  # Apply thresholding

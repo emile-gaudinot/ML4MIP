@@ -169,3 +169,8 @@ models/
 
 # jupyter_notebooks
 *.ipynb
+
+# other project files
+.unetr
+runs
+outputs
