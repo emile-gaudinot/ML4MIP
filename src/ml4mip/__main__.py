@@ -104,9 +104,11 @@ def evaluate_unetr():
     logging.info("Starting unetr evaluation script")
     model_dir = Path("/group/cake/ML4MIP/models")
     msg = f"Model directory: {model_dir} ({model_dir.exists()})"
+    logging.info(msg)
 
     model_path = model_dir / "fine_tuned_model.pt"
     msg = f"Model path: {model_path} ({model_path.exists()})"
+    logging.info(msg)
 
     model_path_basic = model_dir / "UNETR_model_best_acc.pt"
     msg = f"Model path basic: {model_path_basic} ({model_path_basic.exists()})"
@@ -114,6 +116,7 @@ def evaluate_unetr():
 
     data_dir = Path("/data/training_data")
     msg = f"Data directory: {data_dir} ({data_dir.exists()})"
+    logging.info(msg)
 
     batch_size = 4
 

@@ -86,7 +86,8 @@ def validate(
     dice_metric.reset()
     with torch.no_grad():
         for batch in val_loader:
-            images, masks = batch["image"].to(device), batch["mask"].to(device)
+            images, masks = batch
+            images, masks = images.to(device), masks.to(device)
             outputs = sliding_window_inference(images, (96, 96, 96), 4, model)
             loss = loss_fn(outputs, masks)
             val_loss += loss.item()
