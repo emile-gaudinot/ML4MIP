@@ -107,7 +107,11 @@ def evaluate_unetr():
 
     model_path = model_dir / "fine_tuned_model.pt"
     msg = f"Model path: {model_path} ({model_path.exists()})"
-    # !ls data/training_data/
+
+    model_path_basic = model_dir / "UNETR_model_best_acc.pt"
+    msg = f"Model path basic: {model_path_basic} ({model_path_basic.exists()})"
+    logging.info(msg)
+
     data_dir = Path("/data/training_data")
     msg = f"Data directory: {data_dir} ({data_dir.exists()})"
 
@@ -142,7 +146,10 @@ def evaluate_unetr():
     loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, pin_memory=True)
 
     # Model and optimizer
-    model = torch.jit.load(model_path, map_location=device)
+
+    model = torch.jit.load(model_path_basic, map_location=device)
+    state_dict = torch.load(model_path)
+    model.load_state_dict(state_dict)
     model = model.to(device)
     loss_fn = DiceCELoss(to_onehot_y=True, softmax=True)
     dice_metric = DiceMetric(include_background=True, reduction="mean")
