@@ -84,8 +84,9 @@ def validate(
     model.eval()
     val_loss = 0.0
     dice_metric.reset()
+    progress_bar = tqdm(val_loader, desc="Validation", unit="batch")
     with torch.no_grad():
-        for batch in val_loader:
+        for batch in progress_bar:
             images, masks = batch
             images, masks = images.to(device), masks.to(device)
             outputs = sliding_window_inference(images, (96, 96, 96), 4, model)
