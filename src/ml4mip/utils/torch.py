@@ -1,6 +1,7 @@
 import logging
 from pathlib import Path
 
+import mlflow
 import torch
 from torch import nn
 
@@ -46,6 +47,14 @@ def save_model(model, model_path: str | Path):
     torch.save(model.state_dict(), model_path)
     msg = f"Model saved to {model_path}"
     logger.info(msg)
+
+    # check if there is an mlflow context
+    if mlflow.active_run():
+        try:
+            mlflow.log_artifact(str(model_path))
+        except RuntimeError as e:
+            msg = f"Failed to log model: {e}"
+            logger.exception(msg)
 
 
 def load_model(model_path: str | Path):

@@ -1,12 +1,13 @@
 import logging
 
-import mlflow
 import torch
 from monai.inferers import sliding_window_inference
-from monai.metrics import DiceMetric
 from torch import nn, optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+
+from ml4mip.utils.logging import log_metrics
+from ml4mip.utils.metrics import MetricsManager
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ def train_one_epoch(
     train_loader: DataLoader,
     optimizer: optim.Optimizer,
     loss_fn: nn.Module,
-    dice_metric: DiceMetric,
+    metrics: MetricsManager,
     device: torch.device,
 ) -> float:
     """Train the model for one epoch.
@@ -35,7 +36,7 @@ def train_one_epoch(
     model.to(device)
     model.train()
     epoch_loss = 0.0
-    dice_metric.reset()
+    metrics.reset()
     progress_bar = tqdm(train_loader, desc="Training", unit="batch")
 
     for batch in progress_bar:
@@ -46,11 +47,11 @@ def train_one_epoch(
         # Forward pass
         outputs = model(images)
         if outputs.shape != masks.shape:
-            msg = f"Output shape: {outputs.shape} | Mask shape: {masks.shape}"
+            msg = f"Output shape: {outputs.shape} | Mask shape: {masks.shape}"
             logger.warning(msg)
 
         loss = loss_fn(outputs, masks)
-        dice_metric(y_pred=outputs, y=masks)
+        metrics(y_pred=outputs, y=masks)
 
         # Backward pass
         loss.backward()
@@ -59,12 +60,9 @@ def train_one_epoch(
         epoch_loss += loss.item()
         progress_bar.set_postfix({"Batch Loss": loss.item()})
 
-    avg_dice = dice_metric.aggregate().item()
-    dice_metric.reset()
-
     return {
         "loss": epoch_loss / len(train_loader),
-        "avg_dice": avg_dice,
+        **(metrics.aggregate()),
     }
 
 
@@ -73,7 +71,7 @@ def validate(
     model: nn.Module,
     val_loader: DataLoader,
     loss_fn: nn.Module,
-    dice_metric: DiceMetric,
+    metrics: MetricsManager,
     device: torch.device,
 ) -> tuple[float, float]:
     """Validate the model on the validation dataset.
@@ -91,7 +89,7 @@ def validate(
     model.to(device)
     model.eval()
     loss = 0.0
-    dice_metric.reset()
+    metrics.reset()
     progress_bar = tqdm(val_loader, desc="Validation", unit="batch")
 
     with torch.no_grad():
@@ -102,15 +100,12 @@ def validate(
             loss = loss_fn(outputs, masks)
             loss += loss.item()
 
-            dice_metric(y_pred=outputs, y=masks)
+            metrics(y_pred=outputs, y=masks)
             progress_bar.set_postfix({"Batch Loss": loss.item()})
-
-    avg_dice = dice_metric.aggregate().item()
-    dice_metric.reset()
 
     return {
         "loss": loss / len(val_loader),
-        "avg_dice": avg_dice,
+        **(metrics.aggregate()),
     }
 
 
@@ -120,7 +115,7 @@ def train(
     train_loader: DataLoader,
     optimizer: optim.Optimizer,
     loss_fn: nn.Module,
-    dice_metric: DiceMetric,
+    metrics: MetricsManager,
     device: torch.device,
     num_epochs: int,
     val_loader: DataLoader | None = None,
@@ -143,32 +138,27 @@ def train(
         msg = f"Epoch {epoch + 1}/{num_epochs}: training..."
         logger.info(msg)
         # Train for one epoch
-        train_result = train_one_epoch(
+        train_metrics = train_one_epoch(
             model=model,
             train_loader=train_loader,
             optimizer=optimizer,
-            dice_metric=dice_metric,
+            metrics=metrics,
             loss_fn=loss_fn,
             device=device,
         )
-        mlflow.log_metric("train_loss", train_result["loss"], step=epoch + 1)
-        mlflow.log_metric("train_dice", train_result["avg_dice"], step=epoch + 1)
-        msg = (
-            f"Epoch {epoch + 1}/{num_epochs}: train_loss={train_result['loss']:.4f}, "
-            f"train_dice={train_result['avg_dice']:.4f}"
-        )
-        logger.info(msg)
+        log_metrics("train", train_metrics, epoch, num_epochs, logger)
         if val_loader is not None:
             msg = f"Epoch {epoch + 1}/{num_epochs}: validation..."
             logger.info(msg)
             # Validate
-            val_result = validate(model, val_loader, loss_fn, dice_metric, device)
-            mlflow.log_metric("val_loss", val_result["loss"], step=epoch + 1)
-            mlflow.log_metric("val_dice", val_result["avg_dice"], step=epoch + 1)
-            msg = (
-                f"Epoch {epoch + 1}/{num_epochs}: val_loss={val_result['loss']:.4f}, "
-                f"val_dice={val_result['avg_dice']:.4f}"
+            val_result = validate(
+                model=model,
+                val_loader=val_loader,
+                loss_fn=loss_fn,
+                metrics=metrics,
+                device=device,
             )
+            log_metrics("val", val_result, epoch, num_epochs, logger)
 
         # Scheduler step (if applicable)
         if scheduler:
