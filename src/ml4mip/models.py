@@ -105,22 +105,22 @@ class UNetWrapper(torch.nn.Module):
         x = self.firstBlock(x)
         
         #Encoder
-        x = checkpoint(self.en1, x)
+        x = self.en1(x)
         skip.append(torch.clone(x))
-        x = checkpoint(self.en2, x)
+        x = self.en2(x)
         skip.append(torch.clone(x))
-        x = checkpoint(self.en3, x)
+        x = self.en3(x)
         skip.append(torch.clone(x))
         
         x = self.valley(x)
             
         #Decoder
         x = torch.cat((x, skip[-1]), 1)
-        x = checkpoint(self.dec1, x)
+        x = self.dec1(x)
         x = torch.cat((x, skip[-2]), 1)
-        x = checkpoint(self.dec2, x)
+        x = self.dec2(x)
         x = torch.cat((x, skip[-3]), 1)
-        x = checkpoint(self.dec3, x)
+        x = self.dec3(x)
         
         x = self.sig(x)
         return x
