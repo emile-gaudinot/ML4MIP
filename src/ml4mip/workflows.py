@@ -19,6 +19,7 @@ from ml4mip.models import ModelConfig, get_model
 from ml4mip.utils.logging import log_hydra_config_to_mlflow, log_metrics
 from ml4mip.utils.metrics import MetricsManager
 from ml4mip.utils.torch import save_model
+from ml4mip.visualize import visualize_model
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class Config:
     num_epochs: int = 10
     model: ModelConfig = MISSING
     dataset: DatasetConfig = MISSING
+    visualize_model_batches: int = 1
 
 
 _cs = ConfigStore.instance()
@@ -111,6 +113,13 @@ def run_training(cfg: Config) -> None:
                 model,
                 Path(cfg.model_dir) / cfg.model_tag,
             )
+            visualize_model(
+                val_loader,
+                model,
+                device,
+                n=cfg.visualize_model_batches,
+                sigmoid=True,
+            )
     except KeyboardInterrupt:
         # Handle manual stopping
         logger.info("Manual stopping detected. Saving model state...")
@@ -171,4 +180,11 @@ def run_evaluation(cfg: Config):
             epoch=0,
             num_epochs=0,
             logger=logger,
+        )
+        visualize_model(
+            val_loader,
+            model,
+            device,
+            n=cfg.visualize_model_batches,
+            sigmoid=True,
         )

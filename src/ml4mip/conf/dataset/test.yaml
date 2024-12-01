@@ -2,8 +2,8 @@ defaults:
   - base_dataset
 
 data_dir: "/Users/pvmeng/Documents/ML4MIP/data/tiny_data"
-image_suffix: "avg_seg.nii.gz"
-mask_suffix: "avg.nii.gz"
+image_suffix: "avg.nii.gz"
+mask_suffix: "avg_seg.nii.gz"
 transform: RESIZE_96
 train: true
 split_ratio: 0.9
