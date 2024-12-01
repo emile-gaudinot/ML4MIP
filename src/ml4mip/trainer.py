@@ -20,6 +20,7 @@ def train_one_epoch(
     loss_fn: nn.Module,
     metrics: MetricsManager,
     device: torch.device,
+    batch_idx: int,
 ) -> float:
     """Train the model for one epoch.
 
@@ -37,6 +38,8 @@ def train_one_epoch(
     model.train()
     epoch_loss = 0.0
     metrics.reset()
+    batch_metric = metrics.copy()
+    batch_metric.reset()
     progress_bar = tqdm(train_loader, desc="Training", unit="batch")
 
     for batch in progress_bar:
@@ -52,12 +55,25 @@ def train_one_epoch(
 
         loss = loss_fn(outputs, masks)
         metrics(y_pred=outputs, y=masks)
+        batch_metric(y_pred=outputs, y=masks)
 
         # Backward pass
         loss.backward()
         optimizer.step()
 
         epoch_loss += loss.item()
+        batch_metrics = {
+            "loss": loss.item(),
+            **(batch_metric.aggregate()),
+        }
+        log_metrics(
+            "train_batch",
+            batch_metrics,
+            step=batch_idx,
+            logger=logger,
+        )
+        batch_idx += 1
+        batch_metric.reset()
         progress_bar.set_postfix({"Batch Loss": loss.item()})
 
     return {
@@ -88,7 +104,7 @@ def validate(
     """
     model.to(device)
     model.eval()
-    loss = 0.0
+    val_loss = 0.0
     metrics.reset()
     progress_bar = tqdm(val_loader, desc="Validation", unit="batch")
 
@@ -98,13 +114,13 @@ def validate(
             images, masks = images.to(device), masks.to(device)
             outputs = sliding_window_inference(images, (96, 96, 96), 4, model)
             loss = loss_fn(outputs, masks)
-            loss += loss.item()
+            val_loss += loss.item()
 
             metrics(y_pred=outputs, y=masks)
             progress_bar.set_postfix({"Batch Loss": loss.item()})
 
     return {
-        "loss": loss / len(val_loader),
+        "loss": val_loss / len(val_loader),
         **(metrics.aggregate()),
     }
 
@@ -134,6 +150,7 @@ def train(
         num_epochs: Number of epochs for fine-tuning.
         scheduler: Learning rate scheduler (optional).
     """
+    global_batch_idx = 0
     for epoch in range(num_epochs):
         msg = f"Epoch {epoch + 1}/{num_epochs}: training..."
         logger.info(msg)
@@ -145,8 +162,20 @@ def train(
             metrics=metrics,
             loss_fn=loss_fn,
             device=device,
+            batch_idx=global_batch_idx,
         )
-        log_metrics("train", train_metrics, epoch, num_epochs, logger)
+        global_batch_idx += len(train_loader)
+
+        log_metrics(
+            "train",
+            train_metrics,
+            step=epoch,
+            epochs=(
+                epoch,
+                num_epochs,
+            ),
+            logger=logger,
+        )
         if val_loader is not None:
             msg = f"Epoch {epoch + 1}/{num_epochs}: validation..."
             logger.info(msg)
@@ -158,7 +187,16 @@ def train(
                 metrics=metrics,
                 device=device,
             )
-            log_metrics("val", val_result, epoch, num_epochs, logger)
+            log_metrics(
+                "val",
+                val_result,
+                step=epoch,
+                epochs=(
+                    epoch,
+                    num_epochs,
+                ),
+                logger=logger,
+            )
 
         # Scheduler step (if applicable)
         if scheduler:

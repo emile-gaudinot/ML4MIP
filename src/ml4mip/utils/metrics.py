@@ -3,6 +3,7 @@ from typing import Any
 
 import torch
 from monai.metrics import Metric
+import copy
 
 
 class Metric(Enum):
@@ -54,3 +55,6 @@ class MetricsManager:
         self.results = {name: metric.aggregate().item() for name, metric in self.metrics.items()}
         self.reset()  # Reset metrics after aggregation
         return self.results
+
+    def copy(self):
+        return copy.deepcopy(self)

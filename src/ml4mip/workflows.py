@@ -177,8 +177,7 @@ def run_evaluation(cfg: Config):
         log_metrics(
             "val",
             val_result,
-            epoch=0,
-            num_epochs=0,
+            step=0,
             logger=logger,
         )
         visualize_model(

@@ -5,16 +5,21 @@ from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 
 
-def get_log_message(label: str, metrics: dict[str, float], epoch: int, num_epochs: int) -> str:
+def get_log_message(
+    label: str,
+    metrics: dict[str, float],
+    epochs: tuple[int, int] | None = None,
+) -> str:
     """Create a formatted log message for training or validation metrics."""
     # Format the epoch information
-    epoch_info = f"Epoch {epoch + 1}/{num_epochs}"
 
     # Format the metrics
     metrics_info = ", ".join(f"{label}_{name}={value:.4f}" for name, value in metrics.items())
 
-    # Combine epoch information and metrics
-    return f"{epoch_info}: {metrics_info}"
+    if epochs:
+        return f"Epoch {epochs[0] + 1}/{epochs[1]}: {metrics_info}"
+
+    return metrics_info
 
 
 def mlflow_log_metrics(label: str, metrics: dict[str, float], step: int) -> None:
@@ -26,14 +31,18 @@ def mlflow_log_metrics(label: str, metrics: dict[str, float], step: int) -> None
 def log_metrics(
     label: str,
     metrics: dict[str, float],
-    epoch: int,
-    num_epochs: int,
+    step: int,
+    epochs: tuple[int, int] | None = None,
     logger: Logger | None = None,
 ) -> None:
     """Log metrics to the console and MLflow."""
-    mlflow_log_metrics(label, metrics, step=epoch + 1)
+    mlflow_log_metrics(label, metrics, step)
     if logger is not None:
-        msg = get_log_message(label, metrics, epoch, num_epochs)
+        msg = get_log_message(
+            label,
+            metrics,
+            epochs=epochs,
+        )
         logger.info(msg)
 
 
