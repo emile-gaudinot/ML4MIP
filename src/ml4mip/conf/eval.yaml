@@ -1,7 +1,7 @@
 defaults:
   - base_eval
   - dataset: default        # Default dataset configuration
-  - model: unetr            # Default model configuration
+  - model: unet            # Default model configuration
 
 
 batch_size: 1

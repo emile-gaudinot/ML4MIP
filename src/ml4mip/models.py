@@ -40,6 +40,90 @@ class UnetrPtrJitWrapper(torch.nn.Module):
         full_output = self.model(x)  # Forward pass through the original model
         return full_output[:, self.selected_channels, ...]
 
+class UNetWrapper(torch.nn.Module):
+    from torch.utils.checkpoint import checkpoint, checkpoint_sequential
+
+    def __init__(self):
+        super(UNetWrapper, self).__init__()
+        
+        #First block without checkpointing
+        self.firstBlock = torch.nn.Sequential(*[
+            torch.nn.Conv3d(1, 12, kernel_size=3, padding=1), torch.nn.ReLU()
+        ])
+        
+        #Sequentials for Checkpointin
+        
+        self.en1 = torch.nn.Sequential(*[
+            torch.nn.Conv3d(12, 12, kernel_size=3, padding=1), torch.nn.ReLU()
+        ])
+        
+        self.en2 = torch.nn.Sequential(*[
+            torch.nn.MaxPool3d(2),
+            torch.nn.Conv3d(12, 24, kernel_size=3, padding=1), torch.nn.ReLU(),
+            torch.nn.Conv3d(24, 24, kernel_size=3, padding=1), torch.nn.ReLU()
+        ])
+        
+        self.en3 = torch.nn.Sequential(*[
+            torch.nn.MaxPool3d(2, padding=(0,0,1)),
+            torch.nn.Conv3d(24, 48, kernel_size=3, padding=1), torch.nn.ReLU(),
+            torch.nn.Conv3d(48, 48, kernel_size=3, padding=1), torch.nn.ReLU()
+        ])
+        
+        self.valley = torch.nn.Sequential(*[
+            torch.nn.MaxPool3d(2),
+            torch.nn.Conv3d(48, 96, kernel_size=3, padding=1), torch.nn.ReLU(),
+            torch.nn.Conv3d(96, 96, kernel_size=3, padding=1), torch.nn.ReLU(),
+            torch.nn.ConvTranspose3d(96, 48, 2, 2)
+        ])
+        
+        self.dec1 = torch.nn.Sequential(*[
+            torch.nn.Conv3d(96, 48, kernel_size=3, padding=1), torch.nn.ReLU(),
+            torch.nn.Conv3d(48, 48, kernel_size=3, padding=1), torch.nn.ReLU(),
+            torch.nn.ConvTranspose3d(48, 24, 2, 2, padding=(0,0,1))
+        ])
+        
+        self.dec2 = torch.nn.Sequential(*[
+            torch.nn.Conv3d(48, 24, kernel_size=3, padding=1), torch.nn.ReLU(),
+            torch.nn.Conv3d(24, 24, kernel_size=3, padding=1), torch.nn.ReLU(),
+            torch.nn.ConvTranspose3d(24, 12, 2, 2)
+        ])
+        
+        self.dec3 = torch.nn.Sequential(*[
+            torch.nn.Conv3d(24, 12, kernel_size=3, padding=1), torch.nn.ReLU(),
+            torch.nn.Conv3d(12, 12, kernel_size=3, padding=1), torch.nn.ReLU(),
+            torch.nn.Conv3d(12, 1, kernel_size=3, padding=1), torch.nn.ReLU()
+        ])
+        
+        #Sigmoid for output
+        self.sig = torch.nn.Sigmoid()
+
+    def forward(self, x):
+        #Skip-Connections
+        skip = []
+        
+        #First Convolution
+        x = self.firstBlock(x)
+        
+        #Encoder
+        x = checkpoint(self.en1, x)
+        skip.append(torch.clone(x))
+        x = checkpoint(self.en2, x)
+        skip.append(torch.clone(x))
+        x = checkpoint(self.en3, x)
+        skip.append(torch.clone(x))
+        
+        x = self.valley(x)
+            
+        #Decoder
+        x = torch.cat((x, skip[-1]), 1)
+        x = checkpoint(self.dec1, x)
+        x = torch.cat((x, skip[-2]), 1)
+        x = checkpoint(self.dec2, x)
+        x = torch.cat((x, skip[-3]), 1)
+        x = checkpoint(self.dec3, x)
+        
+        x = self.sig(x)
+        return x
 
 def get_model(cfg: ModelConfig) -> torch.nn.Module:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -47,6 +131,8 @@ def get_model(cfg: ModelConfig) -> torch.nn.Module:
         case ModelType.UNETR_PTR:
             model = torch.jit.load(cfg.base_model_jit_path, map_location=device)
             model = UnetrPtrJitWrapper(model)
+        case ModelType.UNET:
+            model = UNetWrapper()
         case _:
             msg = f"Model type {cfg.model_type} not implemented."
             raise NotImplementedError(msg)
@@ -56,3 +142,4 @@ def get_model(cfg: ModelConfig) -> torch.nn.Module:
         model.load_state_dict(state_dict)
 
     return model
+
