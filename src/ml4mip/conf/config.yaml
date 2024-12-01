@@ -1,5 +1,5 @@
 defaults:
-  - base_train
+  - base_config
   - dataset: default        # Default dataset configuration
   - model: unet            # Default model configuration
 
@@ -11,4 +11,5 @@ num_epochs: 20
 ml_flow_uri: "file://${hydra:runtime.cwd}/runs"
 model_dir: ${hydra:runtime.cwd}/models
 model_tag: "unet.pt"
+mode: TRAIN
 

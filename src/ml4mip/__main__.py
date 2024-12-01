@@ -4,7 +4,7 @@ import hydra
 from omegaconf import OmegaConf
 
 from ml4mip.workflows import (
-    ConfigBase,
+    Config,
     Mode,
     run_evaluation,
     run_training,
@@ -13,8 +13,8 @@ from ml4mip.workflows import (
 logger = logging.getLogger(__name__)
 
 
-@hydra.main(version_base=None, config_path="conf", config_name="train")
-def main(cfg: ConfigBase):
+@hydra.main(version_base=None, config_path="conf", config_name="config")
+def main(cfg: Config):
     logger.info(OmegaConf.to_yaml(cfg))
     match cfg.mode:
         case Mode.TRAIN:

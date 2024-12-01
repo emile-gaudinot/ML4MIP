@@ -29,35 +29,26 @@ class Mode(Enum):
 
 
 @dataclass
-class ConfigBase:
+class Config:
     ml_flow_uri: str = str(Path.cwd() / "runs")
     model_dir: str = MISSING
     model_tag: str = MISSING
-    mode: Mode = MISSING
-
-
-@dataclass
-class TrainingConfig(ConfigBase):
+    mode: Mode = Mode.TRAIN
     batch_size: int = 1
     lr: float = 1e-4
     num_epochs: int = 10
     model: ModelConfig = MISSING
     dataset: DatasetConfig = MISSING
-    mode: Mode = Mode.TRAIN
 
 
 _cs = ConfigStore.instance()
 _cs.store(
     name="base_config",
-    node=ConfigBase,
-)
-_cs.store(
-    name="base_train",
-    node=TrainingConfig,
+    node=Config,
 )
 
 
-def run_training(cfg: TrainingConfig) -> None:
+def run_training(cfg: Config) -> None:
     """Prepare data, model, and training loop for fine-tuning."""
     logger.info("Starting model training script")
 
@@ -130,21 +121,7 @@ def run_training(cfg: TrainingConfig) -> None:
         )
 
 
-@dataclass
-class EvaluationConfig(ConfigBase):
-    batch_size: int = 1
-    model: ModelConfig = MISSING
-    dataset: DatasetConfig = MISSING
-    mode: Mode = Mode.EVAL
-
-
-_cs.store(
-    name="base_eval",
-    node=EvaluationConfig,
-)
-
-
-def run_evaluation(cfg: EvaluationConfig):
+def run_evaluation(cfg: Config):
     logger.info("Starting unetr evaluation script")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
