@@ -1,9 +1,9 @@
+import copy
 from enum import Enum
 from typing import Any
 
 import torch
 from monai.metrics import Metric
-import copy
 
 
 class Metric(Enum):
@@ -19,7 +19,9 @@ class MetricsManager:
     def __init__(
         self,
         metrics: dict[str, Metric],
-        sigmoid: bool = False,
+        sigmoid: bool = True,
+        binary: bool = True,
+        binary_threshold: float = 0.5,
     ):
         """Initialize the MetricsManager with a dictionary of metric objects."""
         # check that 'loss' isn't in the metrics
@@ -32,6 +34,8 @@ class MetricsManager:
         self.metrics = metrics
         self.results = {name: None for name in metrics}
         self.sigmoid = sigmoid
+        self.binary = binary
+        self.binary_threshold = binary_threshold
 
     def reset(self):
         """Reset all metrics."""
@@ -43,6 +47,9 @@ class MetricsManager:
         if self.sigmoid:
             y_pred = torch.sigmoid(y_pred)
 
+        if self.binary:
+            y_pred = (y_pred > self.binary_threshold).float()
+
         for metric in self.metrics.values():
             metric(y_pred=y_pred, y=y)
 
@@ -53,7 +60,6 @@ class MetricsManager:
     def aggregate(self) -> dict[str, Any]:
         """Compute the final results for all metrics."""
         self.results = {name: metric.aggregate().item() for name, metric in self.metrics.items()}
-        self.reset()  # Reset metrics after aggregation
         return self.results
 
     def copy(self):
