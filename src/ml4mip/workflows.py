@@ -8,7 +8,6 @@ import mlflow.pytorch
 import torch
 from hydra.core.config_store import ConfigStore
 from monai.losses import DiceCELoss
-from monai.metrics import DiceMetric
 from omegaconf import MISSING
 from torch import optim
 from torch.utils.data import DataLoader
@@ -123,7 +122,7 @@ def run_training(cfg: Config) -> None:
 
 
 def run_evaluation(cfg: Config):
-    logger.info("Starting unetr evaluation script")
+    logger.info("Starting evaluation script")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     cfg.dataset.train = False
