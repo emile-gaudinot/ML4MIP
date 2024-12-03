@@ -228,16 +228,6 @@ visualize_graph(
     skeleton, reduced_graph
 )  # TODO for some reason it looks like some edges are missing
 
-# %%
-
-# %%
-visualize_graph(skeleton, graph)
-
-# %%
-reduced_graph = reduce_graph(graph)
-visualize_graph(skeleton, reduced_graph)
-# for u, v in reduced_graph.edges():
-#     print(f"Edge: {u} -> {v}")
 
 # %% [markdown]
 # # Visualization Functions
