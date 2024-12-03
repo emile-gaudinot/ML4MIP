@@ -17,7 +17,7 @@ from ml4mip import trainer
 from ml4mip.dataset import DatasetConfig, get_dataset
 from ml4mip.models import ModelConfig, get_model
 from ml4mip.utils.logging import log_hydra_config_to_mlflow, log_metrics
-from ml4mip.utils.metrics import MetricsManager
+from ml4mip.utils.metrics import get_metrics
 from ml4mip.utils.torch import save_model
 from ml4mip.visualize import visualize_model
 
@@ -78,15 +78,7 @@ def run_training(cfg: Config) -> None:
 
     # TODO: parameterize loss function and metric
     loss_fn = DiceCELoss(sigmoid=True)
-    metrics = MetricsManager(
-        metrics={
-            "dice": DiceMetric(
-                include_background=True,
-                reduction="mean",
-            )
-        },
-        sigmoid=True,
-    )
+    metrics = get_metrics()
 
     # Initialize MLflow
     mlflow.set_tracking_uri(cfg.ml_flow_uri)  # Update path as needed
@@ -149,15 +141,7 @@ def run_evaluation(cfg: Config):
 
     # TODO: parameterize loss function and metric
     loss_fn = DiceCELoss(sigmoid=True)
-    metrics = MetricsManager(
-        metrics={
-            "dice": DiceMetric(
-                include_background=True,
-                reduction="mean",
-            )
-        },
-        sigmoid=True,
-    )
+    metrics = get_metrics()
 
     # Initialize MLflow
     mlflow.set_tracking_uri(cfg.ml_flow_uri)  # Update path as needed
