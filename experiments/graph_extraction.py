@@ -58,6 +58,61 @@ def plot_3d_volume_with_skeleton(
     plt.legend()
     plt.show()
 
+def visualize_graph(skeleton, G):
+    """Visualize the skeleton and its graph representation.
+
+    Parameters:
+        skeleton (numpy.ndarray): 3D binary array of the skeleton.
+        G (networkx.Graph): Graph representation of the skeleton.
+    """
+    fig = plt.figure(figsize=(10, 10))
+    ax = fig.add_subplot(111, projection="3d")
+
+    # Plot the skeleton points
+    z, y, x = np.nonzero(skeleton)
+    ax.scatter(x, y, z, c="blue", s=1, label="Skeleton")
+
+    # Plot the graph nodes (add label only once)
+    has_node_label = False
+    for node, data in G.nodes(data=True):
+        coord = data["coordinate"]
+        ax.scatter(
+            coord[2], coord[1], coord[0], c="red", s=2, label="Nodes" if not has_node_label else None
+        )
+        has_node_label = True
+
+    # Plot the graph edges
+    has_edge_label = False
+    for u, v in G.edges():
+        coord_u = G.nodes[u]["coordinate"]
+        coord_v = G.nodes[v]["coordinate"]
+        ax.plot(
+            [coord_u[2], coord_v[2]],
+            [coord_u[1], coord_v[1]],
+            [coord_u[0], coord_v[0]],
+            c="green",
+            linewidth=2,
+            label="Edges" if not has_edge_label else None,
+        )
+        has_edge_label = True
+
+    # Set labels and legend
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_zlabel("Z")
+    ax.legend(loc="best")
+
+    # Adjust aspect ratio for better visibility
+    max_range = np.array([x.max() - x.min(), y.max() - y.min(), z.max() - z.min()]).max() / 2.0
+    mid_x = (x.max() + x.min()) * 0.5
+    mid_y = (y.max() + y.min()) * 0.5
+    mid_z = (z.max() + z.min()) * 0.5
+    ax.set_xlim(mid_x - max_range, mid_x + max_range)
+    ax.set_ylim(mid_y - max_range, mid_y + max_range)
+    ax.set_zlim(mid_z - max_range, mid_z + max_range)
+
+    plt.show()
+
 
 
 # %%
@@ -123,6 +178,7 @@ def skeleton_to_graph(skeleton):
 
     return G
 
+
 def reduce_graph(graph):
     """Reduce the graph by keeping only nodes that are endpoints or connecting nodes.
 
@@ -146,73 +202,33 @@ def reduce_graph(graph):
         if degree == 1 or degree > 2:
             # Add the node to the reduced graph with its attributes
             reduced_graph.add_node(node, **graph.nodes[node])  # Copy node attributes
-            
-    
+
+    for primary_node in reduced_graph.nodes():
+        for primary_neighbor in graph.neighbors(primary_node):
+            visited = set()
+            current_node = primary_neighbor
+            while current_node not in reduced_graph.nodes():
+                visited.add(current_node)
+                current_node_neighbors = set(graph.neighbors(current_node))
+                assert len(current_node_neighbors) == 2, f"{len(current_node_neighbors)=}"
+                diff = current_node_neighbors - visited - {primary_node}
+                assert len(diff) == 1, f"{len(diff)=}"
+                current_node = diff.pop()
+
+            reduced_graph.add_edge(primary_node, current_node)
 
     return reduced_graph
 
 
+
 # %%
 graph = skeleton_to_graph(skeleton)
-
+reduced_graph = reduce_graph(graph)
+visualize_graph(
+    skeleton, reduced_graph
+)  # TODO for some reason it looks like some edges are missing
 
 # %%
-def visualize_graph(skeleton, G):
-    """Visualize the skeleton and its graph representation.
-
-    Parameters:
-        skeleton (numpy.ndarray): 3D binary array of the skeleton.
-        G (networkx.Graph): Graph representation of the skeleton.
-    """
-    fig = plt.figure(figsize=(10, 10))
-    ax = fig.add_subplot(111, projection="3d")
-
-    # Plot the skeleton points
-    z, y, x = np.nonzero(skeleton)
-    ax.scatter(x, y, z, c="blue", s=1, label="Skeleton")
-
-    # Plot the graph nodes (add label only once)
-    has_node_label = False
-    for node, data in G.nodes(data=True):
-        coord = data["coordinate"]
-        ax.scatter(
-            coord[2], coord[1], coord[0], c="red", s=10, label="Nodes" if not has_node_label else None
-        )
-        has_node_label = True
-
-    # Plot the graph edges
-    has_edge_label = False
-    for u, v in G.edges():
-        coord_u = G.nodes[u]["coordinate"]
-        coord_v = G.nodes[v]["coordinate"]
-        ax.plot(
-            [coord_u[2], coord_v[2]],
-            [coord_u[1], coord_v[1]],
-            [coord_u[0], coord_v[0]],
-            c="green",
-            linewidth=2,
-            label="Edges" if not has_edge_label else None,
-        )
-        has_edge_label = True
-
-    # Set labels and legend
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
-    ax.set_zlabel("Z")
-    ax.legend(loc="best")
-
-    # Adjust aspect ratio for better visibility
-    max_range = np.array([x.max() - x.min(), y.max() - y.min(), z.max() - z.min()]).max() / 2.0
-    mid_x = (x.max() + x.min()) * 0.5
-    mid_y = (y.max() + y.min()) * 0.5
-    mid_z = (z.max() + z.min()) * 0.5
-    ax.set_xlim(mid_x - max_range, mid_x + max_range)
-    ax.set_ylim(mid_y - max_range, mid_y + max_range)
-    ax.set_zlim(mid_z - max_range, mid_z + max_range)
-
-    plt.show()
-
-
 
 # %%
 visualize_graph(skeleton, graph)
