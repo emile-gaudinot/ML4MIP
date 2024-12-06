@@ -6,6 +6,8 @@ from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
 from torch.utils.checkpoint import checkpoint, checkpoint_sequential
 
+from ml4mip.segment_anything import sam_model_registry
+
 
 class ModelType(Enum):
     UNETR_PTR = "unetr_ptr"
@@ -21,6 +23,7 @@ class ModelConfig:
     base_model_jit_path: str | None = None
     # TODO add more config values for other model classes:
     # maybe nested classes are better for model specific config values
+    checkpoint_path: str | None = None
 
 
 _cs = ConfigStore.instance()
@@ -137,6 +140,10 @@ def get_model(cfg: ModelConfig) -> torch.nn.Module:
             model = UnetrPtrJitWrapper(model)
         case ModelType.UNET:
             model = UNetWrapper()
+        case ModelType.MEDSAM:
+            MedSAM_CKPT_PATH = cfg.checkpoint_path
+            model = sam_model_registry['vit_b'](checkpoint=MedSAM_CKPT_PATH)
+            model.load_state_dict(torch.load(MedSAM_CKPT_PATH, weights_only=False))
         case _:
             msg = f"Model type {cfg.model_type} not implemented."
             raise NotImplementedError(msg)
