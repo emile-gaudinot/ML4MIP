@@ -4,6 +4,7 @@ from enum import Enum
 import torch
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
+from torch.utils.checkpoint import checkpoint, checkpoint_sequential
 
 
 class ModelType(Enum):
@@ -44,8 +45,6 @@ class UnetrPtrJitWrapper(torch.nn.Module):
 
 
 class UNetWrapper(torch.nn.Module):
-    from torch.utils.checkpoint import checkpoint, checkpoint_sequential
-
     def __init__(self):
         super(UNetWrapper, self).__init__()
         
@@ -106,25 +105,26 @@ class UNetWrapper(torch.nn.Module):
 
         # First Convolution
         x = self.firstBlock(x)
-
-        # Encoder
-        x = self.en1(x)
+                
+        # Encoding
+        x = checkpoint(self.en1, x)
         skip.append(torch.clone(x))
-        x = self.en2(x)
+        x = checkpoint(self.en2, x)
         skip.append(torch.clone(x))
-        x = self.en3(x)
+        x = checkpoint(self.en3, x)
         skip.append(torch.clone(x))
-
+        
+        # Bottleneck
         x = self.valley(x)
-
-        # Decoder
+            
+        # Decoding
         x = torch.cat((x, skip[-1]), 1)
-        x = self.dec1(x)
+        x = checkpoint(self.dec1, x)
         x = torch.cat((x, skip[-2]), 1)
-        x = self.dec2(x)
+        x = checkpoint(self.dec2, x)
         x = torch.cat((x, skip[-3]), 1)
-        x = self.dec3(x)
-
+        x = checkpoint(self.dec3, x)
+        
         x = self.sig(x)
         return x
 

@@ -5,8 +5,8 @@ defaults:
 
 # Base training configuration
 
-batch_size: 4
-lr: 1e-4
+batch_size: 20
+lr: 1e-3
 num_epochs: 20
 ml_flow_uri: "file://${hydra:runtime.cwd}/runs"
 model_dir: ${hydra:runtime.cwd}/models
