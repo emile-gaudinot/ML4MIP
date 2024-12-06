@@ -97,6 +97,7 @@ def run_training(cfg: Config) -> None:
                 device=device,
                 num_epochs=cfg.num_epochs,
                 val_loader=val_loader,
+                model_type='medsam' if cfg.model_tag == "medsam.pt" else None
             )
 
             # Save and log the final model
