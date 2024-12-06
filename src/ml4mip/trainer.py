@@ -4,6 +4,7 @@ import torch
 from monai.inferers import sliding_window_inference
 from torch import nn, optim
 from torch.utils.data import DataLoader
+import torch.amp as amp
 from tqdm import tqdm
 
 from ml4mip.utils.logging import log_metrics
@@ -21,6 +22,7 @@ def train_one_epoch(
     metrics: MetricsManager,
     device: torch.device,
     batch_idx: int,
+    model_type: str | None = None,
 ) -> float:
     """Train the model for one epoch.
 
@@ -45,10 +47,43 @@ def train_one_epoch(
     for batch in progress_bar:
         images, masks = batch
         images, masks = images.to(device), masks.to(device)
-        optimizer.zero_grad()
+        optimizer.zero_grad()   
 
         # Forward pass
-        outputs = model(images)
+        if model_type == 'medsam':
+            # Reshaping images: treat each z-slice image independantly
+            images = images.permute(0, 4, 1, 2, 3)
+            sh = images.shape
+            images = images.reshape(sh[0]*sh[1], sh[2], sh[3], sh[4])
+            # Same for masks
+            masks = masks.permute(0, 4, 1, 2, 3)
+            sh = masks.shape
+            masks = masks.reshape(sh[0]*sh[1], sh[2], sh[3], sh[4])
+            # Create "image", "boxes", "point_coords", "mask_inputs" and "original_size" attributes to 'x'
+            images = [
+                      {
+                       "image": img,
+                       "boxes": None, # (0, 0, 96, 96)?
+                       # "point_coords": None,
+                       "mask_inputs": mask,
+                       "original_size": None, # 96*96?
+                      } 
+                      for img, mask in zip(images, masks)
+                     ]
+            # del masks ?
+            output = []
+            bs = 2
+            for i in range(len(images)//bs):
+                single_output = model(images[i: i+bs])
+                output.append(single_output)
+                print(f'{type(single_output) = }')
+                print(f'{single_output.shape = }')
+                print(f'{single_output = }')
+            output = torch.tensor(output)
+
+        else:
+            outputs = model(images)
+            
         if outputs.shape != masks.shape:
             msg = f"Output shape: {outputs.shape} | Mask shape: {masks.shape}"
             logger.warning(msg)
@@ -136,6 +171,7 @@ def train(
     num_epochs: int,
     val_loader: DataLoader | None = None,
     scheduler: torch.optim.lr_scheduler._LRScheduler | None = None,
+    model_type: str | None = None,
 ) -> None:
     """Fine-tune the model for several epochs.
 
@@ -163,6 +199,7 @@ def train(
             loss_fn=loss_fn,
             device=device,
             batch_idx=global_batch_idx,
+            model_type=model_type
         )
         global_batch_idx += len(train_loader)
 
