@@ -7,14 +7,14 @@ from skimage.morphology import skeletonize
 logger = logging.getLogger(__name__)
 
 
-def skeleton_to_graph(skeleton):
+def skeleton_to_graph(skeleton) -> nx.Graph:
     """Convert a 3D skeleton into a graph where each skeleton point is a node.
 
     Parameters:
-        skeleton (numpy.ndarray): 3D binary array of the skeleton.
+        skeleton: 3D binary array of the skeleton.
 
     Returns:
-        G (networkx.Graph): Graph representation of the skeleton.
+        Graph representation of the skeleton.
     """
     # Define a 3x3x3 neighborhood kernel to find neighbors
     kernel = np.ones((3, 3, 3))
@@ -45,7 +45,7 @@ def skeleton_to_graph(skeleton):
     return G
 
 
-def reduce_graph(graph):
+def reduce_graph(graph) -> nx.Graph:
     """Reduce the graph by keeping only nodes that are endpoints or connecting nodes.
 
     - Endpoints (nodes with exactly one neighbor).
@@ -55,7 +55,7 @@ def reduce_graph(graph):
         graph (networkx.Graph): Input graph.
 
     Returns:
-        reduced_graph (networkx.Graph): Reduced graph.
+        Reduced graph.
     """
     # Initialize the reduced graph
     reduced_graph = nx.Graph()
@@ -78,7 +78,7 @@ def reduce_graph(graph):
             while current_node not in reduced_graph.nodes():
                 visited.add(current_node)
                 current_node_neighbors = set(graph.neighbors(current_node))
-                # Develop a more robust strategy for handling irregular nodes
+                # TODO: Develop a more robust strategy for handling irregular nodes
                 # assert len(current_node_neighbors) == 2, f"{len(current_node_neighbors)=}"
                 diff = current_node_neighbors - visited - {primary_node}
                 # assert len(diff) == 1, f"{len(diff)=}"
@@ -95,7 +95,8 @@ def reduce_graph(graph):
     return reduced_graph
 
 
-def extract_graph(binary_volume: np.ndarray):
+def extract_graph(binary_volume: np.ndarray) -> tuple[nx.Graph, np.ndarray]:
+    """Extract a reduced graph from a binary volume."""
     skeleton = skeletonize(binary_volume)
     graph = skeleton_to_graph(skeleton)
     reduced_graph = reduce_graph(graph)
