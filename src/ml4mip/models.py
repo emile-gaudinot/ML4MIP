@@ -4,7 +4,7 @@ from enum import Enum
 import torch
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
-from torch.utils.checkpoint import checkpoint, checkpoint_sequential
+from torch.utils.checkpoint import checkpoint
 
 from ml4mip.segment_anything import sam_model_registry
 
@@ -50,55 +50,55 @@ class UnetrPtrJitWrapper(torch.nn.Module):
 class UNetWrapper(torch.nn.Module):
     def __init__(self):
         super(UNetWrapper, self).__init__()
-        
+
         #First block without checkpointing
         self.firstBlock = torch.nn.Sequential(*[
             torch.nn.Conv3d(1, 12, kernel_size=3, padding=1), torch.nn.ReLU()
         ])
-        
+
         #Sequentials for Checkpointin
-        
+
         self.en1 = torch.nn.Sequential(*[
             torch.nn.Conv3d(12, 12, kernel_size=3, padding=1), torch.nn.ReLU()
         ])
-        
+
         self.en2 = torch.nn.Sequential(*[
             torch.nn.MaxPool3d(2),
             torch.nn.Conv3d(12, 24, kernel_size=3, padding=1), torch.nn.ReLU(),
             torch.nn.Conv3d(24, 24, kernel_size=3, padding=1), torch.nn.ReLU()
         ])
-        
+
         self.en3 = torch.nn.Sequential(*[
             torch.nn.MaxPool3d(2),
             torch.nn.Conv3d(24, 48, kernel_size=3, padding=1), torch.nn.ReLU(),
             torch.nn.Conv3d(48, 48, kernel_size=3, padding=1), torch.nn.ReLU()
         ])
-        
+
         self.valley = torch.nn.Sequential(*[
             torch.nn.MaxPool3d(2),
             torch.nn.Conv3d(48, 96, kernel_size=3, padding=1), torch.nn.ReLU(),
             torch.nn.Conv3d(96, 96, kernel_size=3, padding=1), torch.nn.ReLU(),
             torch.nn.ConvTranspose3d(96, 48, 2, 2)
         ])
-        
+
         self.dec1 = torch.nn.Sequential(*[
             torch.nn.Conv3d(96, 48, kernel_size=3, padding=1), torch.nn.ReLU(),
             torch.nn.Conv3d(48, 48, kernel_size=3, padding=1), torch.nn.ReLU(),
             torch.nn.ConvTranspose3d(48, 24, 2, 2)
         ])
-        
+
         self.dec2 = torch.nn.Sequential(*[
             torch.nn.Conv3d(48, 24, kernel_size=3, padding=1), torch.nn.ReLU(),
             torch.nn.Conv3d(24, 24, kernel_size=3, padding=1), torch.nn.ReLU(),
             torch.nn.ConvTranspose3d(24, 12, 2, 2)
         ])
-        
+
         self.dec3 = torch.nn.Sequential(*[
             torch.nn.Conv3d(24, 12, kernel_size=3, padding=1), torch.nn.ReLU(),
             torch.nn.Conv3d(12, 12, kernel_size=3, padding=1), torch.nn.ReLU(),
             torch.nn.Conv3d(12, 1, kernel_size=3, padding=1), torch.nn.ReLU()
         ])
-        
+
         #Sigmoid for output
         self.sig = torch.nn.Sigmoid()
 
@@ -108,7 +108,7 @@ class UNetWrapper(torch.nn.Module):
 
         # First Convolution
         x = self.firstBlock(x)
-                
+
         # Encoding
         x = checkpoint(self.en1, x)
         skip.append(torch.clone(x))
@@ -116,10 +116,10 @@ class UNetWrapper(torch.nn.Module):
         skip.append(torch.clone(x))
         x = checkpoint(self.en3, x)
         skip.append(torch.clone(x))
-        
+
         # Bottleneck
         x = self.valley(x)
-            
+
         # Decoding
         x = torch.cat((x, skip[-1]), 1)
         x = checkpoint(self.dec1, x)
@@ -127,7 +127,7 @@ class UNetWrapper(torch.nn.Module):
         x = checkpoint(self.dec2, x)
         x = torch.cat((x, skip[-3]), 1)
         x = checkpoint(self.dec3, x)
-        
+
         x = self.sig(x)
         return x
 
@@ -142,7 +142,7 @@ def get_model(cfg: ModelConfig) -> torch.nn.Module:
             model = UNetWrapper()
         case ModelType.MEDSAM:
             MedSAM_CKPT_PATH = cfg.checkpoint_path
-            model = sam_model_registry['vit_b'](checkpoint=MedSAM_CKPT_PATH)
+            model = sam_model_registry["vit_b"](checkpoint=MedSAM_CKPT_PATH)
             model.load_state_dict(torch.load(MedSAM_CKPT_PATH, weights_only=False))
         case _:
             msg = f"Model type {cfg.model_type} not implemented."

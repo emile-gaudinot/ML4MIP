@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader
 
 from ml4mip import trainer
 from ml4mip.dataset import DatasetConfig, get_dataset
+from ml4mip.graph_extraction import extract_graph
 from ml4mip.models import ModelConfig, get_model
 from ml4mip.utils.logging import log_hydra_config_to_mlflow, log_metrics
 from ml4mip.utils.metrics import get_metrics
@@ -40,6 +41,8 @@ class Config:
     model: ModelConfig = MISSING
     dataset: DatasetConfig = MISSING
     visualize_model_batches: int = 1
+    plot_3d: bool = True
+    extract_graph: bool = False
 
 
 _cs = ConfigStore.instance()
@@ -97,7 +100,7 @@ def run_training(cfg: Config) -> None:
                 device=device,
                 num_epochs=cfg.num_epochs,
                 val_loader=val_loader,
-                model_type='medsam' if cfg.model.model_type.value == "medsam" else None
+                model_type="medsam" if cfg.model.model_type.value == "medsam" else None,
             )
 
             # Save and log the final model
@@ -111,6 +114,8 @@ def run_training(cfg: Config) -> None:
                 device,
                 n=cfg.visualize_model_batches,
                 sigmoid=True,
+                plot_3d=cfg.plot_3d,
+                extract_graph=(extract_graph if cfg.extract_graph else None),
             )
     except KeyboardInterrupt:
         # Handle manual stopping
@@ -170,4 +175,6 @@ def run_evaluation(cfg: Config):
             device,
             n=cfg.visualize_model_batches,
             sigmoid=True,
+            plot_3d=cfg.plot_3d,
+            extract_graph=(extract_graph if cfg.extract_graph else None),
         )

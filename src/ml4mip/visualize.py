@@ -1,8 +1,10 @@
 import logging
+from collections.abc import Callable
 
 import ipywidgets as widgets
 import matplotlib.pyplot as plt
 import mlflow
+import networkx as nx
 import numpy as np
 import torch
 from ipywidgets import interact
@@ -125,12 +127,124 @@ def display_comparison_slices(
         if active_run:
             mlflow.log_figure(fig, mlflow_name)
             msg = f"Figure logged to MLflow with name: {mlflow_name}"
-            logging.info(msg)
+            logger.info(msg)
         else:
             logger.info("No active MLflow run. Please start an MLflow run to log the figure.")
         plt.close(fig)  # Close the figure to free up memory
     else:
         # Display the plot
+        plt.show()
+
+
+def plot_3d_view(
+    ax,
+    binary_volume: np.ndarray | None = None,
+    skeleton: np.ndarray | None = None,
+    graph: nx.Graph | None = None,
+    voxel_color: str = "orange",
+    skeleton_color: str = "red",
+    node_color: str = "blue",
+    edge_color: str = "green",
+) -> None:
+    """Helper function to render a single 3D view."""
+    # Plot the 3D volume if provided
+    if binary_volume is not None:
+        ax.voxels(binary_volume, facecolors=voxel_color, alpha=0.2)
+
+    # Plot the skeleton if provided
+    if skeleton is not None:
+        x, y, z = np.nonzero(skeleton)
+        ax.scatter(x, y, z, c=skeleton_color, marker="o", s=2, label="Skeleton")
+
+    # Plot the graph if provided
+    if graph is not None:
+        # Plot graph nodes
+        has_node_label = False
+        for _, data in graph.nodes(data=True):
+            coord = data["coordinate"]
+            ax.scatter(
+                coord[0],
+                coord[1],
+                coord[2],
+                c=node_color,
+                s=20,
+                label=("Nodes" if not has_node_label else None),
+            )
+            has_node_label = True
+
+        # Plot graph edges
+        has_edge_label = False
+        for u, v in graph.edges():
+            coord_u = graph.nodes[u]["coordinate"]
+            coord_v = graph.nodes[v]["coordinate"]
+            ax.plot(
+                [coord_u[0], coord_v[0]],
+                [coord_u[1], coord_v[1]],
+                [coord_u[2], coord_v[2]],
+                c=edge_color,
+                linewidth=2,
+                label="Edges" if not has_edge_label else None,
+            )
+            has_edge_label = True
+
+    # Set labels and legend
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_zlabel("Z")
+    ax.legend(loc="best")
+
+
+def plot_comparison(
+    prediction_volume: np.ndarray | None = None,
+    prediction_skeleton: np.ndarray | None = None,
+    prediction_graph: nx.Graph | None = None,
+    ground_truth_volume: np.ndarray | None = None,
+    ground_truth_skeleton: np.ndarray | None = None,
+    ground_truth_graph: nx.Graph | None = None,
+    mlflow_name: str | None = None,
+) -> None:
+    """Render a side-by-side comparison of prediction and ground truth."""
+    # Create the figure with two subplots
+    fig = plt.figure(figsize=(20, 10))
+    ax_pred = fig.add_subplot(121, projection="3d", title="Prediction")
+    ax_gt = fig.add_subplot(122, projection="3d", title="Ground Truth")
+
+    # Plot the prediction
+    plot_3d_view(
+        ax=ax_pred,
+        binary_volume=prediction_volume,
+        skeleton=prediction_skeleton,
+        graph=prediction_graph,
+        voxel_color="orange",
+        skeleton_color="red",
+        node_color="blue",
+        edge_color="green",
+    )
+
+    # Plot the ground truth
+    plot_3d_view(
+        ax=ax_gt,
+        binary_volume=ground_truth_volume,
+        skeleton=ground_truth_skeleton,
+        graph=ground_truth_graph,
+        voxel_color="purple",
+        skeleton_color="cyan",
+        node_color="yellow",
+        edge_color="black",
+    )
+
+    if mlflow_name:
+        # Check if there is an active MLflow run
+        active_run = mlflow.active_run()
+        if active_run:
+            mlflow.log_figure(fig, mlflow_name)
+            msg = f"Figure logged to MLflow with name: {mlflow_name}"
+            logger.info(msg)
+        else:
+            logger.info("No active MLflow run. Please start an MLflow run to log the figure.")
+        plt.close(fig)  # Close the figure to free up memory
+    else:
+        # Display the plots
         plt.show()
 
 
@@ -142,6 +256,8 @@ def visualize_model(
     n: int = 1,
     threshold: float = 0.5,
     sigmoid: bool = True,
+    plot_3d: bool = True,
+    extract_graph: Callable[[np.ndarray], tuple[nx.Graph, np.ndarray]] | None = None,
 ) -> None:
     """Log predictions and visualizations from a data loader to MLflow.
 
@@ -183,3 +299,29 @@ def visualize_model(
                 binary_pred,
                 mlflow_name=f"batch_{batch_idx}_sample_{i}.png",
             )
+
+            if plot_3d is not None:
+                binary_pred_volume, binary_mask_volume = binary_pred > 0, mask_numpy > 0
+                pred_graph, pred_skeleton, mask_graph, mask_skeleton = (
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                if extract_graph is not None:
+                    msg = f"Extracting graph for batch {batch_idx}, sample {i}"
+                    logger.info(msg)
+                    pred_graph, pred_skeleton = extract_graph(binary_pred_volume)
+                    mask_graph, mask_skeleton = extract_graph(binary_mask_volume)
+
+                msg = f"visualize 3d plot for batch {batch_idx}, sample {i}"
+                logger.info(msg)
+                plot_comparison(
+                    prediction_volume=binary_pred_volume,
+                    prediction_skeleton=pred_skeleton,
+                    prediction_graph=pred_graph,
+                    ground_truth_volume=binary_mask_volume,
+                    ground_truth_skeleton=mask_skeleton,
+                    ground_truth_graph=mask_graph,
+                    mlflow_name=f"batch_{batch_idx}_sample_{i}_graph.png",
+                )
