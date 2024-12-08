@@ -64,10 +64,10 @@ def train_one_epoch(
             images = [
                 {
                     "image": img,
-                    "boxes": None,  # (0, 0, 96, 96)?
+                    "boxes": torch.tensor([0, 0, 96, 96], device='cuda'),
                     # "point_coords": None,
                     "mask_inputs": mask,
-                    "original_size": None,  # 96*96?
+                    "original_size": None,  # torch.Tensor([96, 96]),
                 }
                 for img, mask in zip(images, masks, strict=False)
             ]
@@ -77,9 +77,6 @@ def train_one_epoch(
             for i in range(len(images) // bs):
                 single_output = model(images[i : i + bs])
                 output.append(single_output)
-                print(f"{type(single_output) = }")
-                print(f"{single_output.shape = }")
-                print(f"{single_output = }")
             output = torch.tensor(output)
 
         else:

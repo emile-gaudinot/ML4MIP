@@ -108,7 +108,6 @@ class ImageEncoderViT(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        print(f'>>> Beginning of image_encoder.forward(): cuda.memory_allocated = {torch.cuda.memory_allocated()/(1024**3):.2f} GiB')
         x = self.patch_embed(x)
         gc.collect()
         torch.cuda.empty_cache()
