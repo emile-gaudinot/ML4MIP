@@ -78,6 +78,14 @@ def train_one_epoch(
                 single_batch_output = model(images[i : i + bs])
                 outputs += [single_output["masks"][0] for single_output in single_batch_output]
             outputs = torch.stack(outputs)
+            # Add the batch_size dimension
+            outputs_sh = outputs.shape
+            outputs = outputs.reshape(outputs_sh[0]//96, 96, outputs_sh[1], outputs_sh[2], outputs_sh[3])
+            masks_sh = masks.shape
+            masks = masks.reshape(masks_sh[0]//96, 96, masks_sh[1], masks_sh[2], masks_sh[3])
+            # Permute the z index to the end
+            outputs = outputs.permute(0,2,3,4,1).to(dtype=torch.float)
+            masks = masks.permute(0,2,3,4,1)
 
         else:
             outputs = model(images)
