@@ -103,28 +103,21 @@ class Sam(nn.Module):
         )
         ###
         
-        print('>>> image_embeddings will be computed...')
         image_embeddings = self.image_encoder(input_images)
         print('>>> image_embeddings succesfully completed!\n')
 
         outputs = []
         for image_record, curr_embedding in zip(batched_input, image_embeddings):
-            print(f'{image_record["image"].shape = }')
-            print(f'{curr_embedding.shape = }')
             if "point_coords" in image_record:
                 points = (image_record["point_coords"], image_record["point_labels"])
             else:
                 points = None
-            print(f'{points = }')
-            print(f'{image_record.get("boxes", None) = }')
-            print(f'{image_record.get("mask_inputs", None).shape = }')
             sparse_embeddings, dense_embeddings = self.prompt_encoder(
                 points=points,
                 boxes=image_record.get("boxes", None),
                 masks=image_record.get("mask_inputs", None),
             )
-            print(f'{sparse_embeddings.shape = }')
-            print(f'{dense_embeddings.shape = }')
+            # print('>>> prompt_encoder succesfully completed!\n')
             low_res_masks, iou_predictions = self.mask_decoder(
                 image_embeddings=curr_embedding.unsqueeze(0),
                 image_pe=self.prompt_encoder.get_dense_pe(),
@@ -132,6 +125,7 @@ class Sam(nn.Module):
                 dense_prompt_embeddings=dense_embeddings,
                 multimask_output=multimask_output,
             )
+            # print('>>> mask_decoder succesfully completed!\n')
             masks = self.postprocess_masks(
                 low_res_masks,
                 input_size=image_record["image"].shape[-2:],

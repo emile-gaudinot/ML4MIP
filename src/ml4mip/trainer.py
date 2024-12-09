@@ -64,20 +64,20 @@ def train_one_epoch(
             images = [
                 {
                     "image": img,
-                    "boxes": torch.tensor([0, 0, 96, 96], device='cuda'),
+                    "boxes": torch.tensor([[[0, 0, 95, 95]]], device='cuda'),
                     # "point_coords": None,
-                    "mask_inputs": mask,
-                    "original_size": None,  # torch.Tensor([96, 96]),
+                    "mask_inputs": mask[None],
+                    "original_size": (96, 96),
                 }
                 for img, mask in zip(images, masks, strict=False)
             ]
             # del masks ?
-            output = []
+            outputs = []
             bs = 2
             for i in range(len(images) // bs):
-                single_output = model(images[i : i + bs])
-                output.append(single_output)
-            output = torch.tensor(output)
+                single_batch_output = model(images[i : i + bs])
+                outputs += [single_output["masks"][0] for single_output in single_batch_output]
+            outputs = torch.stack(outputs)
 
         else:
             outputs = model(images)

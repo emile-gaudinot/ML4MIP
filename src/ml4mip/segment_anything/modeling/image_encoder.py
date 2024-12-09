@@ -115,11 +115,9 @@ class ImageEncoderViT(nn.Module):
             x = x + self.pos_embed
 
         for i, blk in enumerate(self.blocks):
-            print(f'>>> Block {i}: cuda.memory_allocated = {torch.cuda.memory_allocated()/(1024**3):.2f} GiB')
             x = blk(x)
 
         x = self.neck(x.permute(0, 3, 1, 2))
-        print(f'>>> End of image_encoder.forward(): cuda.memory_allocated = {torch.cuda.memory_allocated() / (1024**3):.2f} GiB')
         
         return x
 
