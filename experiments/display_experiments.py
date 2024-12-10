@@ -22,6 +22,12 @@ from IPython.display import Image, display
 from ipywidgets import widgets
 from mlflow.tracking import MlflowClient
 
+# Adjust the display setting for rows
+pd.set_option('display.max_rows', None)
+
+# To display all columns, if needed:
+pd.set_option('display.max_columns', None)
+
 
 # %%
 class Dashboard:
@@ -85,6 +91,7 @@ class Dashboard:
                 run_info = {
                     "Run ID": run.info.run_id,
                     "Run Name": run.data.tags.get("mlflow.runName", "Unnamed Run"),
+                    "Model Type": run.data.params.get("model.model_type", "Unknown"),
                     "Start Time": pd.to_datetime(run.info.start_time, unit="ms"),
                     "End Time": pd.to_datetime(run.info.end_time, unit="ms") if run.info.end_time else None,
                     "Status": run.info.status
