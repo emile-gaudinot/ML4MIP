@@ -51,6 +51,8 @@ class DatasetConfig:
     target_pixel_dim: tuple[float, float, float] = TARGET_PIXEL_DIM
     target_spatial_size: tuple[int, int, int] = TARGET_SPATIAL_SIZE
     sigma_ratio: float = GOOD_SIGMA_RATIO
+    max_train_samples: int | None = None
+    max_val_samples: int | None = None
 
 
 _cs = ConfigStore.instance()
@@ -78,6 +80,7 @@ def get_dataset(cfg: DatasetConfig) -> tuple[Dataset, Dataset]:
         ),
         train=True,
         split_ratio=cfg.split_ratio,
+        max_samples=cfg.max_train_samples,
     )
 
     val_dataset = NiftiDataset(
@@ -91,6 +94,7 @@ def get_dataset(cfg: DatasetConfig) -> tuple[Dataset, Dataset]:
         ),
         train=False,
         split_ratio=cfg.split_ratio,
+        max_samples=cfg.max_val_samples,
     )
     return train_dataset, val_dataset
 
@@ -116,6 +120,7 @@ class NiftiDataset(Dataset):
         transform: Callable | None = None,
         train: bool = True,
         split_ratio: float = 0.9,
+        max_samples: int | None = None,
     ) -> None:
         self.data_dir: Path = Path(data_dir)
         self.image_suffix: str = image_suffix
@@ -135,6 +140,10 @@ class NiftiDataset(Dataset):
         data_files = list(zip(image_files, mask_files, strict=True))
         data_files = self.get_sample(data_files, train=train, split_ratio=split_ratio)
         self.image_files, self.mask_files = zip(*data_files, strict=True)
+
+        if max_samples is not None:
+            self.image_files = self.image_files[:max_samples]
+            self.mask_files = self.mask_files[:max_samples]
 
         # Ensure image and mask files match
         assert len(self.image_files) == len(
