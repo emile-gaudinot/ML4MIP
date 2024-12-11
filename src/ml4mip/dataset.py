@@ -1,6 +1,5 @@
 import random
 from collections.abc import Callable, Sequence
-from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -29,16 +28,29 @@ from torch.utils.data import Dataset
 class TransformType(Enum):
     RESIZE = "resize"
     PATCH = "patch"
+    STD = "std"
+
+
+# this was calculated after observing the maximum size of the images after the resampling
+TARGET_PIXEL_DIM = (0.5, 0.5, 0.5)
+# That way we don't need to add too much padding.
+TARGET_SPATIAL_SIZE = (512, 448, 256)
+# This was determined with some experiments. It's a good value for the sigma.
+GOOD_SIGMA_RATIO = 0.1
 
 
 @dataclass
 class DatasetConfig:
+    # Don't change these values unless you know what you are doing:
     data_dir: str = "/data/training_data"  # path to the data in the directory
     image_suffix: str = ".img.nii.gz"
     mask_suffix: str = ".label.nii.gz"
     transform: TransformType = TransformType.RESIZE
     size: tuple[int, int, int] = (96, 96, 96)
     split_ratio: float = 0.9
+    target_pixel_dim: tuple[float, float, float] = TARGET_PIXEL_DIM
+    target_spatial_size: tuple[int, int, int] = TARGET_SPATIAL_SIZE
+    sigma_ratio: float = GOOD_SIGMA_RATIO
 
 
 _cs = ConfigStore.instance()
@@ -58,8 +70,11 @@ def get_dataset(cfg: DatasetConfig) -> tuple[Dataset, Dataset]:
         image_suffix=cfg.image_suffix,
         mask_suffix=cfg.mask_suffix,
         transform=get_transform(
-            cfg.transform,
-            cfg.size,
+            type_=cfg.transform,
+            size=cfg.size,
+            target_pixel_dim=cfg.target_pixel_dim,
+            target_spatial_size=cfg.target_spatial_size,
+            sigma_ratio=cfg.sigma_ratio,
         ),
         train=True,
         split_ratio=cfg.split_ratio,
@@ -70,7 +85,9 @@ def get_dataset(cfg: DatasetConfig) -> tuple[Dataset, Dataset]:
         image_suffix=cfg.image_suffix,
         mask_suffix=cfg.mask_suffix,
         transform=get_transform(
-            TransformType.STD,  # don't resize the image in any way
+            type_=TransformType.STD,
+            target_pixel_dim=cfg.target_pixel_dim,
+            target_spatial_size=cfg.target_spatial_size,
         ),
         train=False,
         split_ratio=cfg.split_ratio,
@@ -109,6 +126,10 @@ class NiftiDataset(Dataset):
         # Collect image and mask file paths
         image_files: list[Path] = sorted(self.data_dir.glob(f"*{self.image_suffix}"))
         mask_files: list[Path] = sorted(self.data_dir.glob(f"*{self.mask_suffix}"))
+
+        if len(image_files) == 0 or len(mask_files) == 0:
+            msg = "No image or mask files found. Verify the data directory and image and mask suffixes."
+            raise ValueError(msg)
 
         # Split the dataset into training and validation sets
         data_files = list(zip(image_files, mask_files, strict=True))
@@ -160,71 +181,6 @@ class NiftiDataset(Dataset):
         return img, mask
 
 
-# class NiftiGridPatchDataset(NiftiDataset):
-#     """Subclass of NiftiDataset to handle grid-based patch extraction for large volumes.
-
-#     Loads the entire dataset into memory, should be mainly used for validation. For training
-#     use the the regular NiftiDataset with random patch cropping.
-
-#     Parameters:
-#         data_dir: Path to the directory containing image and mask files.
-#         image_suffix: Suffix or pattern to identify image files (default: '.img.nii.gz').
-#         mask_suffix: Suffix or pattern to identify mask files (default: '.label.nii.gz').
-#         transform: A function/transform to apply to both images and masks.
-#         patch_size: Size of the patches to extract (e.g., (96, 96, 96)).
-#         patch_overlap: Overlap between patches (e.g., (16, 16, 16)).
-#         train: Whether to split data for training or validation.
-#         split_ratio: Ratio for splitting training and validation data.
-#     """
-
-#     def __init__(
-#         self,
-#         data_dir: str | Path,
-#         image_suffix: str = ".img.nii.gz",
-#         mask_suffix: str = ".label.nii.gz",
-#         transform: Callable | None = None,
-#         patch_size: tuple[int, int, int] = (96, 96, 96),
-#         patch_overlap: tuple[int, int, int] = (0, 0, 0),
-#         train: bool = False,
-#         split_ratio: float = 0.9,
-#     ) -> None:
-#         super().__init__(data_dir, image_suffix, mask_suffix, transform, train, split_ratio)
-#         self.patch_size = patch_size
-#         self.patch_overlap = patch_overlap
-#         self.grid_datasets = self._create_grid_datasets()
-
-#     def _create_grid_datasets(self):
-#         """Create GridPatchDatasets for all volumes."""
-#         grid_datasets = []
-#         for img_path, mask_path in zip(self.image_files, self.mask_files, strict=False):
-#             data_dict = {"image": img_path, "mask": mask_path}
-#             loaded_data = self.loader(data_dict)
-#             grid_dataset = GridPatchDataset(
-#                 data=loaded_data,
-#                 patch_size=self.patch_size,
-#                 overlap=self.patch_overlap,
-#             )
-#             grid_datasets.append(grid_dataset)
-#         return grid_datasets
-
-#     def __len__(self):
-#         """Return the total number of patches across all volumes."""
-#         return sum(len(grid) for grid in self.grid_datasets)
-
-#     def __getitem__(self, idx: int):
-#         """Fetch a patch by index."""
-#         for grid_dataset in self.grid_datasets:
-#             if idx < len(grid_dataset):
-#                 patch = grid_dataset[idx]
-#                 if self.transform:
-#                     patch = self.transform(patch)
-#                 return patch["image"], patch["mask"]
-#             idx -= len(grid_dataset)
-
-#         msg = "Index out of range."
-#         raise IndexError(msg)
-
-
 ##### Transformations #####
 
 
@@ -232,7 +188,7 @@ class TruncatedGaussianRandomCrop(Randomizable, MapTransform):
     def __init__(
         self,
         keys: KeysCollection,
-        roi_size: Sequence[int] | int,
+        roi_size: Sequence[int],
         sigma_ratio: float = 0.1,
         allow_missing_keys: bool = False,
     ):
@@ -344,90 +300,117 @@ class TruncatedGaussianRandomCrop(Randomizable, MapTransform):
         return d
 
 
-# The following is data dependent and shouldn't be changed:
-TARGET_PIXEL_DIM = (0.5, 0.5, 0.5)
-# this was calculated after observing the maximum size of the images after the resampling
-# That way we don't need to add too much padding.
-TARGET_SPATIAL_SIZE = (512, 448, 256)  # (X, Y, Z) in voxels
-
-DEFAULT_TRANSFORM_PIPELINES = Compose(
-    [
+def get_default_transforms(
+    target_pixel_dim: tuple[float, float, float],
+    target_spatial_size: tuple[int, int, int],
+) -> list[MapTransform]:
+    return [
         # 1) Ensure Channel first
         EnsureChannelFirstd(keys=["image", "mask"]),
         # 2) Resample the image and mask to have the same voxel spacing
         Spacingd(
             keys=["image", "mask"],
-            pixdim=TARGET_PIXEL_DIM,
+            pixdim=target_pixel_dim,
             mode=("bilinear", "nearest"),
         ),
         # 3) Resize the image and mask to a target spatial size without distorting the aspect ratio
         ResizeWithPadOrCropd(
             keys=["image", "mask"],
-            spatial_size=TARGET_SPATIAL_SIZE,
+            spatial_size=target_spatial_size,
         ),
         # 4) Scale the intensity of the image to [0, 1]
         # this really depends on the input range. it could happen that the range is not meaningful
         ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
         ToTensord(keys=["image", "mask"]),
     ]
-)
+
+
+# DEFAULT_TRANSFORM_COMPONENTS = [
+#     # 1) Ensure Channel first
+#     EnsureChannelFirstd(keys=["image", "mask"]),
+#     # 2) Resample the image and mask to have the same voxel spacing
+#     Spacingd(
+#         keys=["image", "mask"],
+#         pixdim=TARGET_PIXEL_DIM,
+#         mode=("bilinear", "nearest"),
+#     ),
+#     # 3) Resize the image and mask to a target spatial size without distorting the aspect ratio
+#     ResizeWithPadOrCropd(
+#         keys=["image", "mask"],
+#         spatial_size=TARGET_SPATIAL_SIZE,
+#     ),
+#     # 4) Scale the intensity of the image to [0, 1]
+#     # this really depends on the input range. it could happen that the range is not meaningful
+#     ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
+#     ToTensord(keys=["image", "mask"]),
+# ]
 
 
 def get_resize_transform(
-    size: Sequence[int] | int = TARGET_SPATIAL_SIZE,
+    size: Sequence[int] = TARGET_SPATIAL_SIZE,
+    target_pixel_dim: tuple[float, float, float] = TARGET_PIXEL_DIM,
+    target_spatial_size: tuple[int, int, int] = TARGET_SPATIAL_SIZE,
 ):
-    size = np.array(size if isinstance(size, Sequence) else [size])
     # Make a copy of the pipeline transforms
-    custom_transforms = list(deepcopy(DEFAULT_TRANSFORM_PIPELINES.transforms))
-
-    # Define the new transform
-    resize_interpolation = Resized(
-        keys=["image", "mask"],
-        spatial_size=size,
-        mode=("bilinear", "nearest"),
+    transforms = get_default_transforms(target_pixel_dim, target_spatial_size)
+    return Compose(
+        transforms[:-1]
+        + [
+            Resized(
+                keys=["image", "mask"],
+                spatial_size=size,
+                mode=("bilinear", "nearest"),
+            )
+        ]
+        + transforms[-1:]
     )
 
-    # Insert the new transform at the second-to-last position
-    custom_transforms.insert(-1, resize_interpolation)
 
-    return Compose(custom_transforms)
-
-
-def get_patch_transform(size: Sequence[int] | int = 96):
-    size = np.array(size if isinstance(size, Sequence) else [size])
-
+def get_patch_transform(
+    size: Sequence[int] = (96, 96, 96),
+    target_pixel_dim: tuple[float, float, float] = TARGET_PIXEL_DIM,
+    target_spatial_size: tuple[int, int, int] = TARGET_SPATIAL_SIZE,
+    sigma_ratio: float = GOOD_SIGMA_RATIO,
+):
     # Make a copy of the pipeline transforms
-    custom_transforms = list(deepcopy(DEFAULT_TRANSFORM_PIPELINES.transforms))
-
-    # 5) Randomly crop a region from the image and mask
-    random_crop_transform = (
-        TruncatedGaussianRandomCrop(
-            keys=["image", "mask"],
-            roi_size=(size, size, size),
-            sigma_ratio=0.1,
-        ),
+    transforms = get_default_transforms(target_pixel_dim, target_spatial_size)
+    return Compose(
+        transforms[:-1]
+        + [
+            TruncatedGaussianRandomCrop(
+                keys=["image", "mask"],
+                roi_size=size,
+                sigma_ratio=sigma_ratio,
+            )
+        ]
+        + transforms[-1:]
     )
 
-    # Insert the new transform at the second-to-last position
-    custom_transforms.insert(-1, random_crop_transform)
 
-    return Compose(custom_transforms)
-
-
-def get_std_transform():
-    # Make a copy of the pipeline transforms
-    return Compose(list(deepcopy(DEFAULT_TRANSFORM_PIPELINES.transforms)))
+def get_std_transform(
+    target_pixel_dim: tuple[float, float, float] = TARGET_PIXEL_DIM,
+    target_spatial_size: tuple[int, int, int] = TARGET_SPATIAL_SIZE,
+):
+    transforms = get_default_transforms(target_pixel_dim, target_spatial_size)
+    return Compose(transforms)
 
 
-def get_transform(type_: TransformType, size: int) -> Callable:
+def get_transform(
+    type_: TransformType,
+    size: Sequence[int] | int = 96,
+    target_pixel_dim: tuple[float, float, float] = TARGET_PIXEL_DIM,
+    target_spatial_size: tuple[int, int, int] = TARGET_SPATIAL_SIZE,
+    sigma_ratio: float = GOOD_SIGMA_RATIO,
+) -> Callable:
     """Get the transformation function based on the type."""
+    size = [size] * 3 if isinstance(size, int) else size
     match type_:
         case TransformType.RESIZE:
-            return get_resize_transform(size)
+            return get_resize_transform(size, target_pixel_dim, target_spatial_size)
         case TransformType.PATCH:
-            return get_patch_transform(size)
+            return get_patch_transform(size, target_pixel_dim, target_spatial_size, sigma_ratio)
         case TransformType.STD:
-            return get_std_transform()
+            return get_std_transform(target_pixel_dim, target_spatial_size)
         case _:
             msg = f"Invalid transform type: {type_}"
             raise ValueError(msg)

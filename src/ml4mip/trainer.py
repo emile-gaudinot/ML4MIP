@@ -1,7 +1,9 @@
 import logging
+from enum import Enum
 
 import torch
 from monai.inferers import sliding_window_inference
+from monai.transforms import Resize
 from torch import nn, optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -64,7 +66,7 @@ def train_one_epoch(
             images = [
                 {
                     "image": img,
-                    "boxes": torch.tensor([0, 0, 96, 96], device='cuda'),
+                    "boxes": torch.tensor([0, 0, 96, 96], device="cuda"),
                     # "point_coords": None,
                     "mask_inputs": mask,
                     "original_size": None,  # torch.Tensor([96, 96]),
@@ -115,13 +117,25 @@ def train_one_epoch(
     }
 
 
+class InferenceMode(Enum):
+    SLIDING_WINDOW = "sliding_window"
+    RESCALE = "rescale"
+    STD = "standard"
+
+
 # --- VALIDATION FUNCTION ---
+@torch.no_grad()
 def validate(
     model: nn.Module,
     val_loader: DataLoader,
     loss_fn: nn.Module,
     metrics: MetricsManager,
     device: torch.device,
+    inference_mode: InferenceMode = InferenceMode.SLIDING_WINDOW,
+    sw_size: int = 96,
+    sw_batch_size: int = 4,
+    sw_overlap: float = 0.25,
+    model_input_size: tuple[int, int, int] = (96, 96, 96),
 ) -> tuple[float, float]:
     """Validate the model on the validation dataset.
 
@@ -131,6 +145,10 @@ def validate(
         loss_fn: The loss function for validation.
         dice_metric: Dice metric for validation.
         device: The device to run validation on.
+        inference_mode: Inference mode. Default is InferenceMode.SLIDING_WINDOW.
+        sw_size: Sliding window size for inference. If not None, use sliding window inference.
+        sw_batch_size: Sliding window batch size. Default is 4.
+        model_input_size: Used for rescale inference. Doesn't require Channel Dimension. (H, W, D)
 
     Returns:
         Average validation loss and Dice score.
@@ -141,16 +159,42 @@ def validate(
     metrics.reset()
     progress_bar = tqdm(val_loader, desc="Validation", unit="batch")
 
-    with torch.no_grad():
-        for batch in progress_bar:
-            images, masks = batch
-            images, masks = images.to(device), masks.to(device)
-            outputs = sliding_window_inference(images, (96, 96, 96), 4, model)
-            loss = loss_fn(outputs, masks)
-            val_loss += loss.item()
+    for batch in progress_bar:
+        images, masks = batch
+        images, masks = images.to(device), masks.to(device)
+        match inference_mode:
+            case InferenceMode.SLIDING_WINDOW:
+                # sliding_window_inference divides the input image into smaller overlapping windows
+                # of the specified size (sw_size). It processes each window independently, allowing
+                # for efficient inference on large images that may not fit in memory.
+                # The predictions from all windows are then stitched together to reconstruct
+                # the full-size output, averaging overlapping regions to ensure smooth transitions
+                # and reduce artifacts.
+                outputs = sliding_window_inference(
+                    inputs=images,
+                    roi_size=(sw_size, sw_size, sw_size),
+                    sw_batch_size=sw_batch_size,
+                    predictor=model,
+                    overlap=sw_overlap,
+                )
+            case InferenceMode.RESCALE:
+                # Rescale the input image to the model input size
+                resize_transform = Resize(spatial_size=model_input_size)
+                rescaled_images = resize_transform(images)
 
-            metrics(y_pred=outputs, y=masks)
-            progress_bar.set_postfix({"Batch Loss": loss.item()})
+                # Run inference on the rescaled image
+                rescaled_outputs = model(rescaled_images)
+
+                # Rescale the output back to the original image size
+                original_size = images.shape[2:]  # Assuming (B, C, H, W, D) format
+                resize_back_transform = Resize(spatial_size=original_size)
+                outputs = resize_back_transform(rescaled_outputs)
+            case _:
+                outputs = model(images)
+        loss = loss_fn(outputs, masks)
+        val_loss += loss.item()
+        metrics(y_pred=outputs, y=masks)
+        progress_bar.set_postfix({"Batch Loss": loss.item()})
 
     return {
         "loss": val_loss / len(val_loader),
@@ -170,6 +214,11 @@ def train(
     val_loader: DataLoader | None = None,
     scheduler: torch.optim.lr_scheduler._LRScheduler | None = None,
     model_type: str | None = None,
+    val_inference_mode: InferenceMode = InferenceMode.SLIDING_WINDOW,
+    val_sw_size: int = 96,
+    val_sw_batch_size: int = 4,
+    val_sw_overlap: float = 0.25,
+    val_model_input_size: tuple[int, int, int] = (96, 96, 96),
 ) -> None:
     """Fine-tune the model for several epochs.
 
@@ -183,6 +232,11 @@ def train(
         device: The device to use.
         num_epochs: Number of epochs for fine-tuning.
         scheduler: Learning rate scheduler (optional).
+        val_inference_mode: Inference mode for validation. Default is InferenceMode.SLIDING_WINDOW.
+        val_sw_size: Sliding window size for validation inference. Default is 96.
+        val_sw_batch_size: Sliding window batch size. Default is 4.
+        val_sw_overlap: Sliding window overlap. Default is 0.25.
+        val_model_input_size: Input size for rescale inference. Default is (96, 96, 96).
     """
     global_batch_idx = 0
     for epoch in range(num_epochs):
@@ -221,6 +275,11 @@ def train(
                 loss_fn=loss_fn,
                 metrics=metrics,
                 device=device,
+                inference_mode=val_inference_mode,
+                sw_size=val_sw_size,
+                sw_batch_size=val_sw_batch_size,
+                sw_overlap=val_sw_overlap,
+                model_input_size=val_model_input_size,
             )
             log_metrics(
                 "val",

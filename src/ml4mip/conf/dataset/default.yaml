@@ -4,6 +4,5 @@ defaults:
 data_dir: "/data/training_data"
 image_suffix: "img.nii.gz"
 mask_suffix: "label.nii.gz"
-transform: RESIZE_96
-train: true
+transform: RESIZE
 split_ratio: 0.9

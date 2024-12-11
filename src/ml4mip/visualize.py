@@ -8,6 +8,7 @@ import networkx as nx
 import numpy as np
 import torch
 from ipywidgets import interact
+from skimage.transform import resize
 from torch import nn
 from torch.utils.data import DataLoader
 
@@ -248,16 +249,38 @@ def plot_comparison(
         plt.show()
 
 
-# TODO: add automatic down-sampling for efficient plotting
-# LIMIT for voxel 1 000 000
-def plot_3d_volume(binary_volume=None, skeleton=None, graph=None):
+# TODO: does currently only work with binary volumes
+# Update so the skeleton and graph can be displayed too.
+def plot_3d_volume(binary_volume):
+    if binary_volume is not None and binary_volume.ndim != 3:
+        msg = f"Input binary volume must be 3D, but got shape: {binary_volume.shape}"
+        raise ValueError(msg)
+
+    # Define the voxel limit
+    VOXEL_LIMIT = 100_000
+    # Calculate the number of voxels in the original volume
+    num_voxels = np.prod(binary_volume.shape)
+    if num_voxels > VOXEL_LIMIT:
+        msg = f"Volume exceeds the voxel limit ({VOXEL_LIMIT}). Downsampling for visualization."
+        print(msg)
+        # Calculate the downsampling factor
+        downsample_factor = (VOXEL_LIMIT / num_voxels) ** (1 / 3)
+        # Compute the target shape
+        target_shape = tuple(int(s * downsample_factor) for s in binary_volume.shape)
+        # Downsample the volume
+        binary_volume = resize(
+            binary_volume,
+            output_shape=target_shape,
+            preserve_range=True,
+            anti_aliasing=False,
+            mode="constant",
+        )
+
     fig = plt.figure(figsize=(10, 10))
     ax = fig.add_subplot(111, projection="3d")
     plot_3d_view(
         ax=ax,
         binary_volume=binary_volume,
-        skeleton=skeleton,
-        graph=graph,
         voxel_color="orange",
         skeleton_color="red",
         node_color="blue",
@@ -265,6 +288,7 @@ def plot_3d_volume(binary_volume=None, skeleton=None, graph=None):
     )
 
 
+# TODO: this function should also work without Mlflow for easy testing
 @torch.no_grad()
 def visualize_model(
     data_loader: DataLoader,
