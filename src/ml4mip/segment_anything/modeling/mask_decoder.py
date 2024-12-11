@@ -8,6 +8,7 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
+import warnings
 
 from typing import List, Tuple, Type
 
@@ -136,8 +137,11 @@ class MaskDecoder(nn.Module):
             src = torch.repeat_interleave(image_embeddings, tokens.shape[0], dim=0)
         else:
             src = image_embeddings
-        print(f'{src.shape = }')
-        print(f'{dense_prompt_embeddings.shape = }')
+        ### Upsampling
+        if src.shape != dense_prompt_embeddings.shape:
+            warnings.warn("src and dense_prompt_embeddings don't have the same shape. dense_prompt_embedding upsampled", UserWarning)
+            dense_prompt_embeddings = F.interpolate(dense_prompt_embeddings, size=(64, 64), mode='bilinear', align_corners=False)
+        ###
         src = src + dense_prompt_embeddings
         pos_src = torch.repeat_interleave(image_pe, tokens.shape[0], dim=0)
         b, c, h, w = src.shape
