@@ -9,38 +9,34 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.11.2
 #   kernelspec:
-#     display_name: Python (cake)
+#     display_name: .venv
 #     language: python
-#     name: cake
+#     name: python3
 # ---
 
 # %%
 
 import random
-from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import matplotlib.pyplot as plt
 import matplotlib.style as mplstyle
 import networkx as nx
 import numpy as np
-from monai.config import KeysCollection
 from monai.transforms import (
     Compose,
     EnsureChannelFirstd,
-    MapTransform,
-    Randomizable,
     RandSpatialCropd,
     ResizeWithPadOrCropd,
     ScaleIntensityd,
     Spacingd,
     ToTensord,
 )
-from scipy.stats import truncnorm
 from skimage.transform import resize
 from tqdm.notebook import tqdm
 
-from ml4mip.dataset import NiftiDataset
+from ml4mip.dataset import NiftiDataset, TruncatedGaussianRandomCrop
+from ml4mip.visualize import plot_3d_volume
 
 mplstyle.use("fast")
 mplstyle.use(["dark_background", "ggplot", "fast"])
@@ -71,114 +67,6 @@ def run_dataset_sampling(dataset,analyze_sample, num_samples=100, multi_threaded
 
 
 # %%
-class TruncatedGaussianRandomCrop(Randomizable, MapTransform):
-    def __init__(
-        self,
-        keys: KeysCollection,
-        roi_size: Sequence[int] | int,
-        sigma_ratio: float = 0.1,
-        allow_missing_keys: bool = False,
-    ):
-        """Transform to crop a random region from a volume based on a truncated Gaussian distribution.
-
-        Args:
-            keys: Keys of the corresponding items to be transformed.
-            roi_size: Desired output size of the crop (e.g., Depth, Height, Width for 3D).
-                      Can handle 2D, 3D, or higher-dimensional data.
-            sigma_ratio: Ratio to determine the standard deviation of the Gaussian
-                         distribution relative to volume dimensions.
-            allow_missing_keys: Don't raise exception if key is missing.
-        """
-        super().__init__(keys, allow_missing_keys)
-        self.roi_size = np.array(roi_size if isinstance(roi_size, Sequence) else [roi_size])
-        self.sigma_ratio = sigma_ratio
-
-    def truncated_normal(self, mean, std, lower, upper):
-        """Generate a sample from a truncated normal distribution."""
-        a, b = (lower - mean) / std, (upper - mean) / std
-        return truncnorm.rvs(a, b, loc=mean, scale=std, random_state=self.R)
-
-    def sample_center(self, img_shape):
-        """Sample the center of the crop based on the truncated Gaussian distribution."""
-        img_shape = np.array(img_shape)
-        center = img_shape // 2
-        sigma = img_shape * self.sigma_ratio
-
-        crop_center = []
-        for i in range(len(img_shape)):
-            lower_bound = self.roi_size[i] // 2
-            upper_bound = img_shape[i] - self.roi_size[i] // 2
-            crop_center.append(
-                int(self.truncated_normal(center[i], sigma[i], lower_bound, upper_bound))
-            )
-
-        return np.array(crop_center)
-
-    def plot_distributions(self, img_shape, num_samples=10000):
-        """Plot the distributions of the sampled crop center for each dimension.
-
-        Note:
-        - For 2D data, generates a heatmap for the sampled (x, y) coordinates.
-        - For higher-dimensional data, generates histograms for each dimension.
-        """
-        img_shape = np.array(img_shape)
-        centers = np.array([self.sample_center(img_shape) for _ in range(num_samples)])
-
-        if len(img_shape) == 2:  # Special case: 2D data
-            # Generate 2D histogram for x, y distribution
-            heatmap, xedges, yedges = np.histogram2d(
-                centers[:, 0], centers[:, 1], bins=(50, 50), range=[[0, img_shape[0]], [0, img_shape[1]]]
-            )
-
-            # Plot heatmap
-            plt.figure(figsize=(8, 6))
-            plt.imshow(
-                heatmap.T, origin="lower", aspect="auto",
-                extent=[xedges[0], xedges[-1], yedges[0], yedges[-1]],
-                cmap="viridis"
-            )
-            plt.colorbar(label="Frequency")
-            plt.title("2D Heatmap of Sampled Crop Centers (x, y)")
-            plt.xlabel("Height (y)")
-            plt.ylabel("Width (x)")
-            plt.grid(False)
-            plt.show()
-
-        else:  # Default case: N-Dimensional data
-            fig, axes = plt.subplots(1, len(img_shape), figsize=(5 * len(img_shape), 5))
-            if len(img_shape) == 1:
-                axes = [axes]  # Ensure axes is iterable for 1D case
-            axis_labels = [f"Dim {i}" for i in range(len(img_shape))]
-
-            for i, ax in enumerate(axes):
-                ax.hist(centers[:, i], bins=50, alpha=0.7, color="blue", edgecolor="black")
-                ax.set_title(f"Distribution of {axis_labels[i]} Sampled Crop Centers")
-                ax.set_xlabel(f"{axis_labels[i]} Coordinate")
-                ax.set_ylabel("Frequency")
-                ax.grid(True)
-
-            plt.tight_layout()
-            plt.show()
-
-
-    def __call__(self, data: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-        d = dict(data)
-        for key in self.keys:
-            img = d[key]
-            img_shape = np.array(img.shape[1:])  # Assuming channel-first format
-            crop_center = self.sample_center(img_shape)
-
-            # Calculate the start and end points for cropping
-            start = crop_center - self.roi_size // 2
-            end = start + self.roi_size
-
-            # Extract the crop
-            slices = tuple(slice(s, e) for s, e in zip(start, end, strict=False))
-            d[key] = img[(slice(None), *slices)]
-
-        return d
-
-
 transform = TruncatedGaussianRandomCrop(
     keys=["image", "label"],
     roi_size=(96, 96),
@@ -186,8 +74,6 @@ transform = TruncatedGaussianRandomCrop(
 )
 img_shape = np.array([512, 448])  # Depth, Height, Width
 transform.plot_distributions(img_shape, num_samples=10000)
-
-
 
 # %% [markdown]
 # # Pipeline definition
@@ -231,49 +117,7 @@ pipeline = Compose([
     ToTensord(keys=["image", "mask"])
 ])
 
-# %% [markdown]
-# # Experiment, compare different preprocessing steps with each other
-#
-# - [x] Setting, sample 100 indices and analyze:
-#     - contains positive examples
-#     - what is the true positive portion
-#
-#     - Configuration:
-#         - Random Cropping
-#         - TruncatedGaussianCropping (high ratio)
-#         - TruncatedGaussianCropping (mid ratio)
-#         - TruncatedGaussianCropping (low ratio)
-#
-#
-# # Next steps
-#
-# - Data Preprocessing: how to scale values, maybe filter values that aren't of interest?
-#
-# ## Patch
-# - what is a good patch size 96 x 96 x 96?
-#     => could be handled by unetr
-#     => test this here
-#
-# - training then with random crops
-# - inference with GridOverlap
-#   
-# - What happens if there are empty patches?
-# - How does the model calculate these?
-# => smooth dice loss (monai)
-#
-# - what is a good global training view: it should respect the proportions.
-#     => cannt be handled by unetr
-#     
-#     if equally dimension are required:
-#     (then either resize or CropOrPad ...)
-#
-# - how to validate then?
-#     => then upscale the images again (F.interpolate(predictions, size=original_size, mode='trilinear', align_corners=False))
-#
-#
-# **Integrate these steps in the Pipeline.**
 
-# %%
 size = 96
 pipeline_rand = Compose([
     ensure_channel_first,
@@ -324,9 +168,47 @@ pipeline_gaus_low = Compose([
 ])
 
 
-
-
-
+# %% [markdown]
+# # Experiment, compare different preprocessing steps with each other
+#
+# - [x] Setting, sample 100 indices and analyze:
+#     - contains positive examples
+#     - what is the true positive portion
+#
+#     - Configuration:
+#         - Random Cropping
+#         - TruncatedGaussianCropping (high ratio)
+#         - TruncatedGaussianCropping (mid ratio)
+#         - TruncatedGaussianCropping (low ratio)
+#
+#
+# # Next steps
+#
+# - Data Preprocessing: how to scale values, maybe filter values that aren't of interest?
+#
+# ## Patch
+# - what is a good patch size 96 x 96 x 96?
+#     => could be handled by unetr
+#     => test this here
+#
+# - training then with random crops
+# - inference with GridOverlap
+#   
+# - What happens if there are empty patches?
+# - How does the model calculate these?
+# => smooth dice loss (monai)
+#
+# - what is a good global training view: it should respect the proportions.
+#     => cannt be handled by unetr
+#     
+#     if equally dimension are required:
+#     (then either resize or CropOrPad ...)
+#
+# - how to validate then?
+#     => then upscale the images again (F.interpolate(predictions, size=original_size, mode='trilinear', align_corners=False))
+#
+#
+# **Integrate these steps in the Pipeline.**
 
 # %%
 def analyze_sample(dataset, idx):
@@ -385,23 +267,6 @@ pipelines = list(mapped_results.keys())
 count_positive_values = [mapped_results[name]["count_positive"] for name in pipelines]
 avg_portion_positive_values = [mapped_results[name]["avg_portion_positive"] for name in pipelines]
 
-# # Plot 1: Count of Positive Samples
-# plt.figure(figsize=(12, 5))
-# plt.subplot(1, 2, 1)
-# plt.bar(pipelines, count_positive_values, color='blue', alpha=0.7, edgecolor='black')
-# plt.title("Count of Positive Samples")
-# plt.ylabel("Count Positive")
-# plt.xticks(rotation=15, ha="right")
-
-# # Plot 2: Average Portion of Positive Voxels
-# plt.subplot(1, 2, 2)
-# plt.bar(pipelines, avg_portion_positive_values, color='orange', alpha=0.7, edgecolor='black')
-# plt.title("Average Portion of Positive Voxels")
-# plt.ylabel("Avg Portion Positive")
-# plt.xticks(rotation=15, ha="right")
-
-# plt.tight_layout()
-# plt.show()
 
 fig, ax1 = plt.subplots(figsize=(12, 6))
 
@@ -410,7 +275,15 @@ x = np.arange(len(pipelines))
 width = 0.35  # Width of the bars
 
 # Plot count_positive on the left y-axis
-ax1.bar(x - width / 2, count_positive_values, width, label=f"Count Positive x/{NUM_SAMPLES}", color="blue", alpha=0.7, edgecolor="black")
+ax1.bar(
+    x - width / 2,
+    count_positive_values,
+    width,
+    label=f"Count Positive x/{NUM_SAMPLES}",
+    color="blue",
+    alpha=0.7,
+    edgecolor="black",
+)
 ax1.set_ylabel("Count Positive", color="blue")
 ax1.tick_params(axis="y", labelcolor="blue")
 ax1.set_xticks(x)
@@ -418,7 +291,15 @@ ax1.set_xticklabels(pipelines, rotation=15, ha="right")
 
 # Add the second y-axis for avg_portion_positive
 ax2 = ax1.twinx()
-ax2.bar(x + width / 2, avg_portion_positive_values, width, label="Avg Portion Positive", color="orange", alpha=0.7, edgecolor="black")
+ax2.bar(
+    x + width / 2,
+    avg_portion_positive_values,
+    width,
+    label="Avg Portion Positive",
+    color="orange",
+    alpha=0.7,
+    edgecolor="black",
+)
 ax2.set_ylabel("Avg Portion Positive", color="orange")
 ax2.tick_params(axis="y", labelcolor="orange")
 
@@ -486,94 +367,6 @@ plt.show()
 # - Axis 0: Min = 0.500000 mm, Max = 0.500000 mm  
 # - Axis 1: Min = 0.500000 mm, Max = 0.500000 mm  
 # - Axis 2: Min = 0.500000 mm, Max = 0.500000 mm  
-
-# %% [markdown]
-# sigma_ratio: 0.2
-#
-# True values: 0, False values: 884736
-# True values: 0, False values: 884736
-# True values: 0, False values: 884736
-# True values: 0, False values: 884736
-# True values: 2617, False values: 882119
-# True values: 0, False values: 884736
-# True values: 8064, False values: 876672
-# True values: 0, False values: 884736
-# True values: 313, False values: 884423
-# True values: 6645, False values: 878091
-
-# %%
-def plot_3d_view(
-    ax,
-    binary_volume: np.ndarray | None = None,
-    skeleton: np.ndarray | None = None,
-    graph: nx.Graph | None = None,
-    voxel_color: str = "orange",
-    skeleton_color: str = "red",
-    node_color: str = "blue",
-    edge_color: str = "green",
-) -> None:
-    """Helper function to render a single 3D view."""
-    # Plot the 3D volume if provided
-    if binary_volume is not None:
-        ax.voxels(binary_volume, facecolors=voxel_color, alpha=0.2)
-
-    # Plot the skeleton if provided
-    if skeleton is not None:
-        x, y, z = np.nonzero(skeleton)
-        ax.scatter(x, y, z, c=skeleton_color, marker="o", s=2, label="Skeleton")
-
-    # Plot the graph if provided
-    if graph is not None:
-        # Plot graph nodes
-        has_node_label = False
-        for _, data in graph.nodes(data=True):
-            coord = data["coordinate"]
-            ax.scatter(
-                coord[0],
-                coord[1],
-                coord[2],
-                c=node_color,
-                s=20,
-                label=("Nodes" if not has_node_label else None),
-            )
-            has_node_label = True
-
-        # Plot graph edges
-        has_edge_label = False
-        for u, v in graph.edges():
-            coord_u = graph.nodes[u]["coordinate"]
-            coord_v = graph.nodes[v]["coordinate"]
-            ax.plot(
-                [coord_u[0], coord_v[0]],
-                [coord_u[1], coord_v[1]],
-                [coord_u[2], coord_v[2]],
-                c=edge_color,
-                linewidth=2,
-                label="Edges" if not has_edge_label else None,
-            )
-            has_edge_label = True
-
-    # Set labels and legend
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
-    ax.set_zlabel("Z")
-    ax.legend(loc="best")
-
-def plot_3d_volume(binary_volume=None, skeleton=None, graph=None):
-    fig = plt.figure(figsize=(10, 10))
-    ax = fig.add_subplot(111, projection="3d")
-    plot_3d_view(
-        ax=ax,
-        binary_volume=binary_volume,
-        skeleton=skeleton,
-        graph=graph,
-        voxel_color="orange",
-        skeleton_color="red",
-        node_color="blue",
-        edge_color="green",
-    )
-
-
 
 # %%
 img, mask = ds[0]
