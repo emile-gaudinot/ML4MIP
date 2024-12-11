@@ -45,7 +45,7 @@ class DatasetConfig:
     data_dir: str = "/data/training_data"  # path to the data in the directory
     image_suffix: str = ".img.nii.gz"
     mask_suffix: str = ".label.nii.gz"
-    transform: TransformType = TransformType.RESIZE
+    transform: TransformType = TransformType.PATCH
     size: tuple[int, int, int] = (96, 96, 96)
     split_ratio: float = 0.9
     target_pixel_dim: tuple[float, float, float] = TARGET_PIXEL_DIM
