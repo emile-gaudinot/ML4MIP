@@ -9,9 +9,9 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.11.2
 #   kernelspec:
-#     display_name: .venv
+#     display_name: Python (cake)
 #     language: python
-#     name: python3
+#     name: cake
 # ---
 
 # %% [markdown]
@@ -27,16 +27,16 @@ from ml4mip.visualize import plot_3d_volume
 
 # %%
 cfg = DatasetConfig(
-    data_dir = "/Users/pvmeng/Documents/ML4MIP/data/tiny_data",
+    # data_dir = "/Users/pvmeng/Documents/ML4MIP/data/tiny_data",
     transform= TransformType.RESIZE,
     size = 96,
-    image_suffix="avg.nii.gz",
-    mask_suffix="avg_seg.nii.gz"
+    # image_suffix="avg.nii.gz",
+    # mask_suffix="avg_seg.nii.gz"
 )
 
 ds_train_resize, _ = get_dataset(cfg)
 img, mask = ds_train_resize[0]
-print(img.shape, mask.shape)
+print(img.shape, type(img), mask.shape, type(mask))
 binary_volume = mask.squeeze().numpy().astype(bool)
 plot_3d_volume(binary_volume)
 
@@ -44,7 +44,7 @@ plot_3d_volume(binary_volume)
 cfg.transform = TransformType.PATCH
 ds_train_patch, ds_val = get_dataset(cfg)
 img, mask = ds_train_patch[0]
-print(img.shape, mask.shape)
+print(img.shape, type(img), mask.shape, type(mask))
 binary_volume = mask.squeeze().numpy().astype(bool)
 plot_3d_volume(binary_volume)
 

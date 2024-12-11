@@ -1,8 +1,7 @@
+from dataclasses import asdict
 from logging import Logger
 
 import mlflow
-from omegaconf import OmegaConf
-from omegaconf.dictconfig import DictConfig
 
 
 def get_log_message(
@@ -46,7 +45,7 @@ def log_metrics(
         logger.info(msg)
 
 
-def log_hydra_config_to_mlflow(config: DictConfig, prefix: str = "") -> None:
+def log_hydra_config_to_mlflow(config, prefix: str = "") -> None:
     """Log every parameter from a Hydra DictConfig object to MLflow."""
 
     def flatten_structure(d, parent_key="", sep="."):
@@ -67,11 +66,8 @@ def log_hydra_config_to_mlflow(config: DictConfig, prefix: str = "") -> None:
             items.append((parent_key, d))
         return dict(items)
 
-    # Convert DictConfig to a standard dictionary
-    config_dict = OmegaConf.to_container(config, resolve=True)
-
     # Flatten the structure
-    flat_config = flatten_structure(config_dict)
+    flat_config = flatten_structure(asdict(config))
 
     # Log each parameter to MLflow
     for key, value in flat_config.items():

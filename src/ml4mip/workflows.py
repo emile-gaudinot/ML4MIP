@@ -13,7 +13,7 @@ from torch import optim
 from torch.utils.data import DataLoader
 
 from ml4mip import trainer
-from ml4mip.dataset import DatasetConfig, get_dataset
+from ml4mip.dataset import DatasetConfig, TransformType, get_dataset
 from ml4mip.graph_extraction import extract_graph
 from ml4mip.models import ModelConfig, get_model
 from ml4mip.utils.logging import log_hydra_config_to_mlflow, log_metrics
@@ -62,6 +62,26 @@ _cs.store(
 def run_training(cfg: Config) -> None:
     """Prepare data, model, and training loop for fine-tuning."""
     logger.info("Starting model training script")
+
+    if (
+        cfg.val_inference_mode == trainer.InferenceMode.SLIDING_WINDOW
+        and cfg.dataset.transform != TransformType.PATCH
+    ):
+        msg = (
+            "Sliding window validation is only supported for patch-based datasets. "
+            "Please set the dataset.transform to 'PATCH' in the configuration file."
+        )
+        raise ValueError(msg)
+
+    if (
+        cfg.val_inference_mode == trainer.InferenceMode.RESCALE
+        and cfg.dataset.transform != TransformType.RESIZE
+    ):
+        msg = (
+            "Rescale validation is only supported for resize-based datasets. "
+            "Please set the dataset.transform to 'RESIZE' in the configuration file."
+        )
+        raise ValueError(msg)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_ds, val_ds = get_dataset(cfg.dataset)

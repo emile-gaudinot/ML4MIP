@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: Config):
     logger.info(OmegaConf.to_yaml(cfg))
+    cfg = OmegaConf.to_object(
+        cfg
+    )  # this is important, so the values are treated as in the workflow.Config object
     match cfg.mode:
         case Mode.TRAIN:
             run_training(cfg)

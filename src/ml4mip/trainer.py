@@ -2,8 +2,8 @@ import logging
 from enum import Enum
 
 import torch
+import torch.nn.functional as F
 from monai.inferers import sliding_window_inference
-from monai.transforms import Resize
 from torch import nn, optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -189,16 +189,22 @@ def validate(
                 )
             case InferenceMode.RESCALE:
                 # Rescale the input image to the model input size
-                resize_transform = Resize(spatial_size=model_input_size)
-                rescaled_images = resize_transform(images)
-
+                rescaled_images = F.interpolate(
+                    images,
+                    size=model_input_size,
+                    mode="trilinear",
+                    align_corners=False,
+                )
                 # Run inference on the rescaled image
                 rescaled_outputs = model(rescaled_images)
-
                 # Rescale the output back to the original image size
                 original_size = images.shape[2:]  # Assuming (B, C, H, W, D) format
-                resize_back_transform = Resize(spatial_size=original_size)
-                outputs = resize_back_transform(rescaled_outputs)
+                outputs = F.interpolate(
+                    rescaled_outputs,
+                    size=original_size,
+                    mode="trilinear",
+                    align_corners=False,
+                )
             case _:
                 outputs = model(images)
         loss = loss_fn(outputs, masks)
