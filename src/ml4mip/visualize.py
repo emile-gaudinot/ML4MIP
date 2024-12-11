@@ -248,6 +248,23 @@ def plot_comparison(
         plt.show()
 
 
+# TODO: add automatic down-sampling for efficient plotting
+# LIMIT for voxel 1 000 000
+def plot_3d_volume(binary_volume=None, skeleton=None, graph=None):
+    fig = plt.figure(figsize=(10, 10))
+    ax = fig.add_subplot(111, projection="3d")
+    plot_3d_view(
+        ax=ax,
+        binary_volume=binary_volume,
+        skeleton=skeleton,
+        graph=graph,
+        voxel_color="orange",
+        skeleton_color="red",
+        node_color="blue",
+        edge_color="green",
+    )
+
+
 @torch.no_grad()
 def visualize_model(
     data_loader: DataLoader,
