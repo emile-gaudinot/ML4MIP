@@ -21,7 +21,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import matplotlib.pyplot as plt
 import matplotlib.style as mplstyle
-import networkx as nx
 import numpy as np
 from monai.transforms import (
     Compose,
@@ -193,14 +192,14 @@ pipeline_gaus_low = Compose([
 #
 # - training then with random crops
 # - inference with GridOverlap
-#   
+#
 # - What happens if there are empty patches?
 # - How does the model calculate these?
 # => smooth dice loss (monai)
 #
 # - what is a good global training view: it should respect the proportions.
 #     => cannt be handled by unetr
-#     
+#
 #     if equally dimension are required:
 #     (then either resize or CropOrPad ...)
 #
@@ -345,28 +344,28 @@ plt.show()
 
 
 # %% [markdown]
-# **Shape ranges across samples:**  
-# - Dimension 0: Min = 512, Max = 512  
-# - Dimension 1: Min = 512, Max = 512  
-# - Dimension 2: Min = 206, Max = 277  
+# **Shape ranges across samples:**
+# - Dimension 0: Min = 512, Max = 512
+# - Dimension 1: Min = 512, Max = 512
+# - Dimension 2: Min = 206, Max = 277
 #
-# **Voxel spacing ranges across samples:**  
-# - Axis 0: Min = 0.316406 mm, Max = 0.433594 mm  
-# - Axis 1: Min = 0.316406 mm, Max = 0.433594 mm  
-# - Axis 2: Min = 0.500000 mm, Max = 0.500000 mm  
+# **Voxel spacing ranges across samples:**
+# - Axis 0: Min = 0.316406 mm, Max = 0.433594 mm
+# - Axis 1: Min = 0.316406 mm, Max = 0.433594 mm
+# - Axis 2: Min = 0.500000 mm, Max = 0.500000 mm
 #
 # => use unified voxel spacing: 0.5 / 0.5 / 0.5
 #
-# After Update:  
-# **Shape ranges across samples:**  
+# After Update:
+# **Shape ranges across samples:**
 # - Dimension 0: Min = 512, Max = 512
 # - Dimension 1: Min = 324, Max = 444
-# - Dimension 2: Min = 132, Max = 239 
+# - Dimension 2: Min = 132, Max = 239
 #
-# **Voxel spacing ranges across samples:**  
-# - Axis 0: Min = 0.500000 mm, Max = 0.500000 mm  
-# - Axis 1: Min = 0.500000 mm, Max = 0.500000 mm  
-# - Axis 2: Min = 0.500000 mm, Max = 0.500000 mm  
+# **Voxel spacing ranges across samples:**
+# - Axis 0: Min = 0.500000 mm, Max = 0.500000 mm
+# - Axis 1: Min = 0.500000 mm, Max = 0.500000 mm
+# - Axis 2: Min = 0.500000 mm, Max = 0.500000 mm
 
 # %%
 img, mask = ds[0]

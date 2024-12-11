@@ -23,10 +23,10 @@ from ipywidgets import widgets
 from mlflow.tracking import MlflowClient
 
 # Adjust the display setting for rows
-pd.set_option('display.max_rows', None)
+pd.set_option("display.max_rows", None)
 
 # To display all columns, if needed:
-pd.set_option('display.max_columns', None)
+pd.set_option("display.max_columns", None)
 
 
 # %%
@@ -171,3 +171,5 @@ class Dashboard:
 # dashboard = Dashboard(tracking_uri="/Users/pvmeng/Documents/ML4MIP/runs")
 dashboard = Dashboard(tracking_uri="/group/cake/ML4MIP/runs")
 dashboard.display()
+
+# %%
