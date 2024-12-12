@@ -9,39 +9,50 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.11.2
 #   kernelspec:
-#     display_name: .venv
+#     display_name: Python (cake)
 #     language: python
-#     name: python3
+#     name: cake
 # ---
 
 # %%
-
+import os
+import pathlib
 import random
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import matplotlib.pyplot as plt
-import matplotlib.style as mplstyle
+import nibabel as nib
 import numpy as np
+import pandas as pd
+from monai.data.utils import affine_to_spacing, compute_shape_offset, to_affine_nd, zoom_affine
 from monai.transforms import (
     Compose,
-    EnsureChannelFirstd,
+    EnsureChannelFirst,
+    LoadImage,
     RandSpatialCropd,
     ResizeWithPadOrCropd,
     ScaleIntensityd,
+    Spacing,
     Spacingd,
     ToTensord,
 )
-from skimage.transform import resize
+from torch.utils.data import DataLoader, Subset
 from tqdm.notebook import tqdm
 
-from ml4mip.dataset import NiftiDataset, TruncatedGaussianRandomCrop
+from ml4mip.dataset import (
+    NiftiDataset,
+    PositiveBiasedRandomCrop,
+    TruncatedGaussianRandomCrop,
+    get_patch_center_gaussian_transform,
+    get_patch_positive_center_transform,
+)
 from ml4mip.visualize import plot_3d_volume
-
-mplstyle.use("fast")
-mplstyle.use(["dark_background", "ggplot", "fast"])
 
 
 # %%
+# Utility functions for collection processing
+
 def run_dataset_sampling(dataset,analyze_sample, num_samples=100, multi_threaded=False):
     indices = random.sample(range(len(dataset)), num_samples)
     results = []
@@ -65,107 +76,266 @@ def run_dataset_sampling(dataset,analyze_sample, num_samples=100, multi_threaded
     return results
 
 
+def process_directory_for_resampling(directory_path, target_pixdim, predict_shape: Callable):
+    """Process all NIfTI files in a directory and predict their new shape."""
+    nifti_files = [f for f in os.listdir(directory_path) if f.endswith(".nii.gz")]
+    resampling_predictions = []
+
+    for nifti_file in nifti_files:
+        file_path = os.path.join(directory_path, nifti_file)
+        current_shape, current_pixdim, new_shape = predict_shape(file_path, target_pixdim)
+        resampling_predictions.append({
+            "filename": nifti_file,
+            "current_shape": tuple(current_shape),
+            "current_pixdim": tuple(current_pixdim),
+            "new_shape": tuple(new_shape),
+            "target_pixdim": target_pixdim,
+        })
+
+    return resampling_predictions
+
+
+# %%
+def predict_new_shape(file_path, target_pixdim, diagonal=False, scale_extent=False):
+    """Predict the new shape of a NIfTI (emulating MONAI's Spacing)."""
+    nii = nib.load(file_path)
+    header = nii.header
+    affine = nii.affine
+    current_shape = np.array(header.get_data_shape())
+
+    # Convert the affine matrix to n-dimensional affine
+    sr = len(current_shape)  # Spatial rank (dimensions)
+    affine_nd = to_affine_nd(sr, affine)  # Convert to spatial affine matrix
+
+    # Extract voxel spacing from n-dimensional affine matrix
+    original_spacing = affine_to_spacing(affine_nd, sr)
+
+    # Compute new affine matrix for target spacing
+    new_affine = zoom_affine(affine_nd, target_pixdim, diagonal=diagonal)
+
+    # Compute output shape and offset
+    output_shape, offset = compute_shape_offset(
+        current_shape,
+        affine_nd,
+        new_affine,
+        scale_extent,
+    )
+
+    # Round output shape to integers
+    new_shape = np.round(output_shape).astype(int)
+    return current_shape, original_spacing, new_shape
+
+# MONAI pipeline to resample image
+def monai_resample_image(file_path, target_pixdim):
+    # Load the image
+    loader = LoadImage(image_only=True)
+    ensure_channel_first = EnsureChannelFirst()
+
+    image = loader(file_path)
+    image = ensure_channel_first(image)
+
+    # Apply Spacing transform
+    spacing_transform = Spacing(pixdim=target_pixdim, mode="bilinear")
+    resampled_image = spacing_transform(image)
+
+    # Get the new shape
+    new_shape = resampled_image.shape[1:]
+    return new_shape
+
+
+
+# Target pixel dimensions
+target_pixel_dimensions = (0.3, 0.3, 0.5)
+
+# Directory containing your NIfTI files
+nifti_directory = pathlib.Path("/data/training_data")
+mask_file = nifti_directory / "188c1f.label.nii.gz"
+image_file = nifti_directory / "188c1f.img.nii.gz"
+
+
+# Test if new shape prediction is correct and works as the MONAI pipeline
+_,_, new_shape = predict_new_shape(image_file, target_pixel_dimensions)
+new_shape_monai = monai_resample_image(image_file, target_pixel_dimensions)
+assert np.allclose(new_shape, new_shape_monai), "Shapes do not match!"
+
+
+# %%
+
+def plot_shape_distribution_with_percentile(resampling_predictions, percentile=90, key="new_shape"):
+    # Extract x, y, z dimensions from the new shape data
+    x_dims = [pred[key][0] for pred in resampling_predictions]  # X-dimension
+    y_dims = [pred[key][1] for pred in resampling_predictions]  # Y-dimension
+    z_dims = [pred[key][2] for pred in resampling_predictions]  # Z-dimension
+
+    # Convert to DataFrame for easier plotting
+    data = pd.DataFrame({"X-Dimension": x_dims, "Y-Dimension": y_dims, "Z-Dimension": z_dims})
+
+    # Create a single figure with 3 subplots
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharey=True)
+
+    fig.suptitle(
+        f"Distribution of {key} (X, Y, Z Dimensions) - {percentile}% Range Included",
+        fontsize=16,
+    )
+
+    # Plot histograms for each dimension and calculate the range
+    for dimension, ax in zip(data.columns, axes, strict=False):
+        lower_bound = data[dimension].quantile((100 - percentile) / 200)
+        upper_bound = data[dimension].quantile(1 - (100 - percentile) / 200)
+        mean = data[dimension].mean()
+        ax.hist(data[dimension], bins=20, alpha=0.7, edgecolor="black")
+        ax.axvline(lower_bound, color="red", linestyle="--", label=f"Lower: {lower_bound:.2f}")
+        ax.axvline(upper_bound, color="blue", linestyle="--", label=f"Upper: {upper_bound:.2f}")
+        ax.set_title(
+            f"{dimension}: [{lower_bound:.2f}, {upper_bound:.2f}] #{mean:.2f}", color="black"
+        )
+        ax.set_xlabel(f"{dimension} ({key})", color="black")
+        ax.set_ylabel("Frequency", color="black")
+        ax.legend()
+        ax.grid(True)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.show()
+
+
+TARGET_PIXEL_DIM = (0.35, 0.35, 0.5)
+TARGET_SPATIAL_SIZE = (600, 600, 280)  # new Target spatial size (600 x 600 x 280)
+
+resampling_metadata = process_directory_for_resampling(
+    nifti_directory,
+    target_pixel_dimensions,
+    predict_new_shape,
+)
+# Example: Call the function with your data
+plot_shape_distribution_with_percentile(
+    resampling_metadata,
+    percentile=90,
+    key="current_pixdim",
+    # key="new_shape",
+)
+
+
 # %%
 transform = TruncatedGaussianRandomCrop(
     keys=["image", "label"],
     roi_size=(96, 96),
-    sigma_ratio=0.2,
+    sigma_ratio=0.1,
 )
-img_shape = np.array([512, 448])  # Depth, Height, Width
+img_shape = np.array([600, 600])  # Depth, Height, Width
 transform.plot_distributions(img_shape, num_samples=10000)
 
 # %% [markdown]
 # # Pipeline definition
 
 # %%
-resample_transform = Spacingd(
-        keys=["image", "mask"],  # Keys to apply the transform
-        pixdim=(0.5, 0.5, 0.5),  # Desired voxel spacing in mm
-        mode=("bilinear", "nearest"),  # Interpolation modes for image and mask
-    )
-
-# this was calculated after observing the maximum size of the images after the resampling
-# That way we don't need to add too much padding.
-# TODO: make the experiment reproducible
-target_spatial_size = (512, 448, 256)  # (X, Y, Z) in voxels
-
-
-resize_transform = ResizeWithPadOrCropd(
-    keys=["image", "mask"],
-    spatial_size=target_spatial_size
-)
-
-ensure_channel_first = EnsureChannelFirstd(keys=["image", "mask"])
-
 # this really depends on the input range. it could happen that the range is not meaningful
 scale_transform = ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0)
 
-# So this could be a good transforming approach
-# Then based on this we could perform the two other transforming operations
-size = 96
-pipeline = Compose([
-    ensure_channel_first,
-    resample_transform,
-    resize_transform,
-    scale_transform,
-    TruncatedGaussianRandomCrop(
-        keys=["image", "mask"],
-        roi_size=(size, size, size),
-        sigma_ratio=0.1,
-    ),
-    ToTensord(keys=["image", "mask"])
-])
+loader = LoadImage(image_only=True, ensure_channel_first=True)
+mask = loader(mask_file)
+img = loader(image_file)
 
+volume = mask.as_tensor().squeeze().numpy() > 0
+print(mask.pixdim, mask.shape)
+positive_count = (volume > 0).sum()
+total_count = volume.size
+print(f"Positive count: {positive_count} / {total_count} ({positive_count / total_count:.2%})")
+plot_3d_volume(volume, voxel_limit=100_000)
 
+# %%
+resample_transform = Spacingd(
+    keys=["image", "mask"],  # Keys to apply the transform
+    pixdim=TARGET_PIXEL_DIM,  # Desired voxel spacing in mm
+    mode=("bilinear", "nearest"),  # Interpolation modes for image and mask
+)
+
+pipeline_no_resize = Compose(
+    [
+        resample_transform,
+        scale_transform,
+        ToTensord(keys=["image", "mask"]),
+    ]
+)
+
+output = pipeline_no_resize({"image": img, "mask": mask})
+volume = output["mask"].squeeze().numpy() > 0
+print(output["mask"].pixdim, output["mask"].shape)
+positive_count = (volume > 0).sum()
+total_count = volume.size
+print(f"Positive count: {positive_count} / {total_count} ({positive_count / total_count:.2%})")
+plot_3d_volume(volume, voxel_limit=100_000)
+
+# %%
+resize_transform = ResizeWithPadOrCropd(
+    keys=["image", "mask"],
+    spatial_size=TARGET_SPATIAL_SIZE,
+)
+
+pipeline_std = Compose(
+    [
+        resample_transform,
+        resize_transform,
+        scale_transform,
+        ToTensord(keys=["image", "mask"]),
+    ]
+)
+
+output = pipeline_std({"image": img, "mask": mask})
+volume = output["mask"].squeeze().numpy() > 0
+print(output["mask"].pixdim, output["mask"].shape)
+positive_count = (volume > 0).sum()
+total_count = volume.size
+print(f"Positive count: {positive_count} / {total_count} ({positive_count / total_count:.2%})")
+plot_3d_volume(volume, voxel_limit=500_000)
+
+# %%
 size = 96
-pipeline_rand = Compose([
-    ensure_channel_first,
-    resample_transform,
-    resize_transform,
-    scale_transform,
-    RandSpatialCropd(
+pipeline = Compose(
+    [
+        resample_transform,
+        resize_transform,
+        scale_transform,
+        TruncatedGaussianRandomCrop(
+            keys=["image", "mask"],
+            roi_size=(size, size, size),
+            sigma_ratio=0.1,
+        ),
+        ToTensord(keys=["image", "mask"]),
+    ]
+)
+
+output = pipeline({"image": img, "mask": mask})
+volume = output["mask"].squeeze().numpy() > 0
+print(output["mask"].pixdim, output["mask"].shape)
+positive_count = (volume > 0).sum()
+total_count = volume.size
+print(f"Positive count: {positive_count} / {total_count} ({positive_count / total_count:.2%})")
+plot_3d_volume(volume, voxel_limit=100_000)
+
+# %%
+size = 96
+pipeline = Compose(
+    [
+        resample_transform,
+        resize_transform,
+        scale_transform,
+        PositiveBiasedRandomCrop(
                 keys=["image", "mask"],
-                roi_size=(size, size, size),  # Size of the patches
-                random_size=False,  # Ensure fixed-size patches
+                positive_key="mask",
+                roi_size=(size, size, size),
+                positive_probability=1,
             ),
-])
+        ToTensord(keys=["image", "mask"]),
+    ]
+)
 
-pipeline_gaus_high = Compose([
-    ensure_channel_first,
-    resample_transform,
-    resize_transform,
-    scale_transform,
-    TruncatedGaussianRandomCrop(
-        keys=["image", "mask"],
-        roi_size=(size, size, size),
-        sigma_ratio=0.2,
-    ),
-])
-
-pipeline_gaus_mid = Compose([
-    ensure_channel_first,
-    resample_transform,
-    resize_transform,
-    scale_transform,
-    TruncatedGaussianRandomCrop(
-        keys=["image", "mask"],
-        roi_size=(size, size, size),
-        sigma_ratio=0.1,
-    ),
-])
-
-pipeline_gaus_low = Compose([
-    ensure_channel_first,
-    resample_transform,
-    resize_transform,
-    scale_transform,
-    TruncatedGaussianRandomCrop(
-        keys=["image", "mask"],
-        roi_size=(size, size, size),
-        sigma_ratio=0.05,
-    ),
-])
-
+output = pipeline({"image": img, "mask": mask})
+volume = output["mask"].squeeze().numpy() > 0
+print(output["mask"].pixdim, output["mask"].shape)
+positive_count = (volume > 0).sum()
+total_count = volume.size
+print(f"Positive count: {positive_count} / {total_count} ({positive_count / total_count:.2%})")
+plot_3d_volume(volume, voxel_limit=100_000)
 
 # %% [markdown]
 # # Experiment, compare different preprocessing steps with each other
@@ -179,39 +349,98 @@ pipeline_gaus_low = Compose([
 #         - TruncatedGaussianCropping (high ratio)
 #         - TruncatedGaussianCropping (mid ratio)
 #         - TruncatedGaussianCropping (low ratio)
-#
-#
-# # Next steps
-#
-# - Data Preprocessing: how to scale values, maybe filter values that aren't of interest?
-#
-# ## Patch
-# - what is a good patch size 96 x 96 x 96?
-#     => could be handled by unetr
-#     => test this here
-#
-# - training then with random crops
-# - inference with GridOverlap
-#
-# - What happens if there are empty patches?
-# - How does the model calculate these?
-# => smooth dice loss (monai)
-#
-# - what is a good global training view: it should respect the proportions.
-#     => cannt be handled by unetr
-#
-#     if equally dimension are required:
-#     (then either resize or CropOrPad ...)
-#
-# - how to validate then?
-#     => then upscale the images again (F.interpolate(predictions, size=original_size, mode='trilinear', align_corners=False))
-#
-#
-# **Integrate these steps in the Pipeline.**
+#         - PositiveBiasedRandomCrop (p=0.75)
+#         - PositiveBiasedRandomCrop (p=1.)
 
 # %%
-def analyze_sample(dataset, idx):
-    img, mask = dataset[idx]
+size = 96
+pipeline_rand = Compose(
+    [
+        resample_transform,
+        resize_transform,
+        scale_transform,
+        RandSpatialCropd(
+            keys=["image", "mask"],
+            roi_size=(size, size, size),  # Size of the patches
+            random_size=False,  # Ensure fixed-size patches
+        ),
+    ]
+)
+
+
+pipeline_gaus_high = get_patch_center_gaussian_transform(
+    size=(size, size, size),
+    target_pixel_dim=TARGET_PIXEL_DIM,
+    target_spatial_size=TARGET_SPATIAL_SIZE,
+    sigma_ratio=0.2,
+)
+
+pipeline_gaus_mid = get_patch_center_gaussian_transform(
+    size=(size, size, size),
+    target_pixel_dim=TARGET_PIXEL_DIM,
+    target_spatial_size=TARGET_SPATIAL_SIZE,
+    sigma_ratio=0.1,
+)
+
+pipeline_gaus_low = get_patch_center_gaussian_transform(
+    size=(size, size, size),
+    target_pixel_dim=TARGET_PIXEL_DIM,
+    target_spatial_size=TARGET_SPATIAL_SIZE,
+    sigma_ratio=0.05,
+)
+
+pipeline_positive_center_mid = get_patch_positive_center_transform(
+    size=(size, size, size),
+    target_pixel_dim=TARGET_PIXEL_DIM,
+    target_spatial_size=TARGET_SPATIAL_SIZE,
+    pos_center_prob=0.75,
+)
+
+pipeline_positive_center_high = get_patch_positive_center_transform(
+    size=(size, size, size),
+    target_pixel_dim=TARGET_PIXEL_DIM,
+    target_spatial_size=TARGET_SPATIAL_SIZE,
+    pos_center_prob=1.,
+)
+
+
+
+def run_dataset_sampling(
+    dataset,
+    analyze_sample,
+    num_samples=100,
+    batch_size=1,
+    num_workers=0,
+    pin_memory=False,
+):
+    # Randomly sample indices from the dataset
+    indices = random.sample(range(len(dataset)), num_samples)
+    subset = Subset(dataset, indices)  # Subset the dataset for selected indices
+
+    # Create a DataLoader for the subset
+    dataloader = DataLoader(
+        subset,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
+
+    results = []
+
+    # Use DataLoader to fetch data and analyze
+    idx = 0
+    for batch in tqdm(dataloader, desc="Analyzing samples"):
+        for img, mask in zip(*batch, strict=True):
+            res = analyze_sample({"image": img, "mask": mask}, idx)
+            results.append(res)
+            idx += 1
+
+    return results
+
+
+def analyze_sample(data, idx):
+    img = data["image"]
+    mask = data["mask"]
 
     binary_volume = mask.squeeze().numpy()
     positive_count = (binary_volume > 0).sum()
@@ -220,7 +449,7 @@ def analyze_sample(dataset, idx):
     portion_positive = positive_count / binary_volume.size
 
     image_shape = img.shape
-    voxel_spacing = img.pixdim.tolist()
+    voxel_spacing = img.pixdim.tolist() if hasattr(img, "pixdim") else None
 
     return {
         "index": idx,
@@ -230,52 +459,67 @@ def analyze_sample(dataset, idx):
         "portion_positive": portion_positive,
     }
 
+
 pipelines = {
     "Random Crop": pipeline_rand,
-    "Gaussian Crop (High Sigma)": pipeline_gaus_high,
-    "Gaussian Crop (Mid Sigma)": pipeline_gaus_mid,
-    "Gaussian Crop (Low Sigma)": pipeline_gaus_low,
+    # "Gaussian Crop (High Sigma)": pipeline_gaus_high,
+    "Gaussian Crop (sigma=0.1)": pipeline_gaus_mid,
+    "Gaussian Crop (sigma=0.05)": pipeline_gaus_low,
+    "Positive Centered Crop (p=0.75)": pipeline_positive_center_mid,
+    "Positive Centered Crop (p=1.0)": pipeline_positive_center_high,
 }
-NUM_SAMPLES = 50
+NUM_SAMPLES = 1
 results = {}
 for name, pipeline in pipelines.items():
     ds = NiftiDataset(
         data_dir="/data/training_data",
         transform=pipeline,
     )
-    results[name] = run_dataset_sampling(ds, analyze_sample, num_samples=NUM_SAMPLES)
+    results[name] = run_dataset_sampling(
+        ds,
+        analyze_sample,
+        batch_size=4,
+        num_samples=NUM_SAMPLES,
+        num_workers=1,
+        pin_memory=False,
+    )
 
-count_positive = lambda items: sum(res["has_positive"] for res in items)
-avg_portion_positive = lambda items: sum(res["portion_positive"] for res in items) / len(items)
 
-mapped_results = {name: {"count_positive": count_positive(res), "avg_portion_positive": avg_portion_positive(res)} for name, res in results.items()}
+# %% [markdown]
+# # Plot Experiment Results
 
 # %%
-result_copy = mapped_results.copy()
-rename_map = {
-    "Random Crop": "Random Crop",
-    "Gaussian Crop (High Sigma)": "High Sigma (0.2)",
-    "Gaussian Crop (Mid Sigma)": "Mid Sigma (0.1)",
-    "Gaussian Crop (Low Sigma)": "Low Sigma (0.05)",
+def count_positive(items):
+    return sum(res["has_positive"] for res in items)
+
+
+def avg_portion_positive(items):
+    return sum(res["portion_positive"] for res in items) / len(items)
+
+
+mapped_results = {
+    name: {"count_positive": count_positive(res), "avg_portion_positive": avg_portion_positive(res)}
+    for name, res in results.items()
 }
-mapped_results = {rename_map[k]: v for k, v in result_copy.items()}
 
-# %%
 # Extract data for plotting
 pipelines = list(mapped_results.keys())
 count_positive_values = [mapped_results[name]["count_positive"] for name in pipelines]
-avg_portion_positive_values = [mapped_results[name]["avg_portion_positive"] for name in pipelines]
+avg_portion_positive_values = [
+    mapped_results[name]["avg_portion_positive"] * 100 for name in pipelines
+]  # Convert to percent
 
 
 fig, ax1 = plt.subplots(figsize=(12, 6))
 
 # Create bar positions
 x = np.arange(len(pipelines))
-width = 0.35  # Width of the bars
+width = 0.2  # Width of the bars
+gap = 0.01  # Add a gap between the bars
 
 # Plot count_positive on the left y-axis
 ax1.bar(
-    x - width / 2,
+    x - width - gap / 2,
     count_positive_values,
     width,
     label=f"Count Positive x/{NUM_SAMPLES}",
@@ -291,7 +535,7 @@ ax1.set_xticklabels(pipelines, rotation=15, ha="right")
 # Add the second y-axis for avg_portion_positive
 ax2 = ax1.twinx()
 ax2.bar(
-    x + width / 2,
+    x + width + gap / 2,
     avg_portion_positive_values,
     width,
     label="Avg Portion Positive",
@@ -299,113 +543,14 @@ ax2.bar(
     alpha=0.7,
     edgecolor="black",
 )
-ax2.set_ylabel("Avg Portion Positive", color="orange")
+ax2.set_ylabel("Avg Portion Positive (%)", color="orange")
 ax2.tick_params(axis="y", labelcolor="orange")
 
 # Add title and legend
-# fig.suptitle("Comparison of Count Positive and Avg Portion Positive with Dual Scales")
+fig.suptitle(
+    "Comparison of Count Positive and Avg Portion Positive with Dual Scales", color="black"
+)
 ax1.legend(loc="upper left", bbox_to_anchor=(0, 1), labelcolor="black")
 ax2.legend(loc="upper right", bbox_to_anchor=(1, 1), labelcolor="black")
-plt.title("Comparison of Count Positive and Avg Portion Positive with Dual Scales")
 plt.tight_layout()
 plt.show()
-
-# %%
-# Logic for printing Image shapes etc, was useful for logging
-# # Analyze the shapes
-# if shapes:
-#     # Convert shapes to a tensor for easier analysis
-#     shape_tensor = torch.tensor(shapes)
-
-#     # Compute min and max for each dimension
-#     min_dims = shape_tensor.min(dim=0).values
-#     max_dims = shape_tensor.max(dim=0).values
-
-#     print("Shape ranges across samples:")
-#     for i, (min_val, max_val) in enumerate(zip(min_dims.tolist(), max_dims.tolist(), strict=False)):
-#         print(f"Dimension {i}: Min = {min_val}, Max = {max_val}")
-# else:
-#     print("No shapes were analyzed.")
-
-# # Analyze the voxel spacings
-# if spacings:
-#     # Convert spacings to a tensor for easier analysis
-#     spacing_tensor = torch.tensor(spacings)
-
-#     # Compute min and max for each dimension
-#     min_spacings = spacing_tensor.min(dim=0).values
-#     max_spacings = spacing_tensor.max(dim=0).values
-
-#     print("\nVoxel spacing ranges across samples:")
-#     for i, (min_val, max_val) in enumerate(zip(min_spacings.tolist(), max_spacings.tolist(), strict=False)):
-#         print(f"Axis {i}: Min = {min_val:.6f} mm, Max = {max_val:.6f} mm")
-# else:
-#     print("No voxel spacings were analyzed.")
-
-
-# %% [markdown]
-# **Shape ranges across samples:**
-# - Dimension 0: Min = 512, Max = 512
-# - Dimension 1: Min = 512, Max = 512
-# - Dimension 2: Min = 206, Max = 277
-#
-# **Voxel spacing ranges across samples:**
-# - Axis 0: Min = 0.316406 mm, Max = 0.433594 mm
-# - Axis 1: Min = 0.316406 mm, Max = 0.433594 mm
-# - Axis 2: Min = 0.500000 mm, Max = 0.500000 mm
-#
-# => use unified voxel spacing: 0.5 / 0.5 / 0.5
-#
-# After Update:
-# **Shape ranges across samples:**
-# - Dimension 0: Min = 512, Max = 512
-# - Dimension 1: Min = 324, Max = 444
-# - Dimension 2: Min = 132, Max = 239
-#
-# **Voxel spacing ranges across samples:**
-# - Axis 0: Min = 0.500000 mm, Max = 0.500000 mm
-# - Axis 1: Min = 0.500000 mm, Max = 0.500000 mm
-# - Axis 2: Min = 0.500000 mm, Max = 0.500000 mm
-
-# %%
-img, mask = ds[0]
-print(f"{mask.shape=}")
-binary_volume = mask.squeeze().numpy()
-print(f"{binary_volume.shape=}")
-# Count the number of True and False values in the binary_volume
-true_count = (binary_volume > 0).sum()
-false_count = binary_volume.size - true_count
-
-print(f"True values: {true_count}, False values: {false_count}")
-downsample_factor = 0.25
-target_shape = tuple(int(s * downsample_factor) for s in binary_volume.shape)
-
-downsampled_volume = resize(
-    binary_volume,
-    output_shape=target_shape,
-    preserve_range=True,
-    anti_aliasing=False,
-    mode="constant"
-)
-print(f"{downsampled_volume.shape=}")
-
-# %%
-plot_3d_volume(binary_volume=downsampled_volume)
-
-# %%
-import plotly.graph_objects as go
-
-# Assume `binary_volume` is a 3D numpy array
-fig = go.Figure(data=go.Volume(
-    x=np.arange(downsampled_volume.shape[0]),
-    y=np.arange(downsampled_volume.shape[1]),
-    z=np.arange(downsampled_volume.shape[2]),
-    value=downsampled_volume.flatten(),
-    opacity=0.1,
-    surface_count=20
-))
-fig.show()
-
-# would be nice to have something interactive that is a bit faster, why doesn't it work?
-# TODO: here also check provided examples
-
