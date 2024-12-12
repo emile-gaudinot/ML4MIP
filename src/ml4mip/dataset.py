@@ -11,7 +11,6 @@ from hydra.core.config_store import ConfigStore
 from monai.config import KeysCollection
 from monai.transforms import (
     Compose,
-    EnsureChannelFirstd,
     LoadImaged,
     MapTransform,
     Randomizable,
@@ -27,16 +26,18 @@ from torch.utils.data import Dataset
 
 class TransformType(Enum):
     RESIZE = "resize"
-    PATCH = "patch"
+    PATCH_CENTER_GAUSSIAN = "patch_center_gaussian"
+    PATCH_POS_CENTER = "patch_pos"
     STD = "std"
 
 
 # this was calculated after observing the maximum size of the images after the resampling
-TARGET_PIXEL_DIM = (0.5, 0.5, 0.5)
+TARGET_PIXEL_DIM = (0.35, 0.35, 0.5)
 # That way we don't need to add too much padding.
-TARGET_SPATIAL_SIZE = (512, 448, 256)
+TARGET_SPATIAL_SIZE = (600, 600, 280)
 # This was determined with some experiments. It's a good value for the sigma.
 GOOD_SIGMA_RATIO = 0.1
+POS_CENTER_PROB = 0.75
 
 
 @dataclass
@@ -45,12 +46,13 @@ class DatasetConfig:
     data_dir: str = "/data/training_data"  # path to the data in the directory
     image_suffix: str = ".img.nii.gz"
     mask_suffix: str = ".label.nii.gz"
-    transform: TransformType = TransformType.PATCH
+    transform: TransformType = TransformType.PATCH_POS_CENTER
     size: tuple[int, int, int] = (96, 96, 96)
     split_ratio: float = 0.9
     target_pixel_dim: tuple[float, float, float] = TARGET_PIXEL_DIM
     target_spatial_size: tuple[int, int, int] = TARGET_SPATIAL_SIZE
     sigma_ratio: float = GOOD_SIGMA_RATIO
+    pos_center_prob: float = POS_CENTER_PROB
     max_train_samples: int | None = None
     max_val_samples: int | None = None
 
@@ -77,6 +79,7 @@ def get_dataset(cfg: DatasetConfig) -> tuple[Dataset, Dataset]:
             target_pixel_dim=cfg.target_pixel_dim,
             target_spatial_size=cfg.target_spatial_size,
             sigma_ratio=cfg.sigma_ratio,
+            pos_center_prob=cfg.pos_center_prob,
         ),
         train=True,
         split_ratio=cfg.split_ratio,
@@ -126,7 +129,8 @@ class NiftiDataset(Dataset):
         self.image_suffix: str = image_suffix
         self.mask_suffix: str = mask_suffix
         self.transform: Callable | None = transform
-        self.loader = LoadImaged(keys=["image", "mask"])
+        # Initialize the loader, very import to ensure channel first!
+        self.loader = LoadImaged(keys=["image", "mask"], ensure_channel_first=True)
 
         # Collect image and mask file paths
         image_files: list[Path] = sorted(self.data_dir.glob(f"*{self.image_suffix}"))
@@ -309,50 +313,119 @@ class TruncatedGaussianRandomCrop(Randomizable, MapTransform):
         return d
 
 
+class PositiveBiasedRandomCrop(Randomizable, MapTransform):
+    def __init__(
+        self,
+        keys,
+        roi_size,
+        positive_key,
+        positive_probability=POS_CENTER_PROB,
+        allow_missing_keys=False,
+    ):
+        """Randomly crops with a specified probability of centering the crop on a positive voxel.
+
+        Args:
+            keys: Keys of the corresponding items to be transformed.
+            roi_size: Desired output size of the crop (e.g., Depth, Height, Width for 3D).
+                      Can handle 2D, 3D, or higher-dimensional data.
+            positive_key: Key for the segmentation mask used to determine positive voxels.
+            positive_probability: Probability that the crop will center on a positive voxel.
+            allow_missing_keys: Don't raise exception if key is missing.
+        """
+        super().__init__(keys, allow_missing_keys)
+        self.roi_size = np.array(roi_size if isinstance(roi_size, list | tuple) else [roi_size])
+        self.positive_key = positive_key
+        self.positive_probability = positive_probability
+
+    def sample_center_positive(self, mask):
+        """Sample a crop center from positive voxels."""
+        img_shape = np.array(mask.shape[1:])
+        positive_mask = mask.squeeze() > 0  # Shape: (600, 600, 280)
+
+        # Create boundary masks for each axis
+        z_valid = np.arange(mask.shape[1]) >= self.roi_size[0] // 2
+        z_valid &= np.arange(mask.shape[1]) < img_shape[0] - self.roi_size[0] // 2
+
+        y_valid = np.arange(mask.shape[2]) >= self.roi_size[1] // 2
+        y_valid &= np.arange(mask.shape[2]) < img_shape[1] - self.roi_size[1] // 2
+
+        x_valid = np.arange(mask.shape[3]) >= self.roi_size[2] // 2
+        x_valid &= np.arange(mask.shape[3]) < img_shape[2] - self.roi_size[2] // 2
+
+        # Combine the positive mask with valid bounds for each axis
+        valid_mask = (
+            positive_mask & z_valid[:, None, None] & y_valid[None, :, None] & x_valid[None, None, :]
+        )
+
+        # Get positive voxel coordinates
+        positive_voxels = np.argwhere(valid_mask)
+
+        if len(positive_voxels) == 0:
+            # No positive voxels found, sample randomly
+            return self.sample_center_random(img_shape)
+
+        return random.choice(positive_voxels)
+
+    def sample_center_random(self, img_shape):
+        """Sample a random crop center."""
+        crop_center = [
+            self.R.randint(self.roi_size[i] // 2, img_shape[i] - self.roi_size[i] // 2)
+            for i in range(len(img_shape))
+        ]
+        return np.array(crop_center)
+
+    def __call__(self, data):
+        """Apply the crop transform to the input data."""
+        d = dict(data)
+
+        if not self.allow_missing_keys and not all(k in d for k in self.keys):
+            msg = f"Keys {self.keys} not found in data dictionary"
+            raise KeyError(msg)
+
+        mask = d[self.positive_key]
+        img_shape = np.array(mask.shape[1:])
+
+        crop_center = (
+            self.sample_center_positive(mask)
+            if self.R.random() < self.positive_probability
+            else self.sample_center_random(img_shape)
+        )
+
+        for key in self.keys:
+            img = d[key]
+
+            # Calculate start and end indices for cropping
+            start = crop_center - self.roi_size // 2
+            end = start + self.roi_size
+
+            # Extract the crop
+            slices = tuple(slice(s, e) for s, e in zip(start, end, strict=False))
+            d[key] = img[(slice(None), *slices)]
+
+        return d
+
+
 def get_default_transforms(
     target_pixel_dim: tuple[float, float, float],
     target_spatial_size: tuple[int, int, int],
 ) -> list[MapTransform]:
     return [
-        # 1) Ensure Channel first
-        EnsureChannelFirstd(keys=["image", "mask"]),
-        # 2) Resample the image and mask to have the same voxel spacing
+        # 1) Resample the image and mask to have the same voxel spacing
         Spacingd(
             keys=["image", "mask"],
             pixdim=target_pixel_dim,
             mode=("bilinear", "nearest"),
         ),
-        # 3) Resize the image and mask to a target spatial size without distorting the aspect ratio
+        # 2) Resize the image and mask to a target spatial size without distorting the aspect ratio
         ResizeWithPadOrCropd(
             keys=["image", "mask"],
             spatial_size=target_spatial_size,
         ),
-        # 4) Scale the intensity of the image to [0, 1]
+        # 3) Scale the intensity of the image to [0, 1]
         # this really depends on the input range. it could happen that the range is not meaningful
         ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
         ToTensord(keys=["image", "mask"]),
     ]
-
-
-# DEFAULT_TRANSFORM_COMPONENTS = [
-#     # 1) Ensure Channel first
-#     EnsureChannelFirstd(keys=["image", "mask"]),
-#     # 2) Resample the image and mask to have the same voxel spacing
-#     Spacingd(
-#         keys=["image", "mask"],
-#         pixdim=TARGET_PIXEL_DIM,
-#         mode=("bilinear", "nearest"),
-#     ),
-#     # 3) Resize the image and mask to a target spatial size without distorting the aspect ratio
-#     ResizeWithPadOrCropd(
-#         keys=["image", "mask"],
-#         spatial_size=TARGET_SPATIAL_SIZE,
-#     ),
-#     # 4) Scale the intensity of the image to [0, 1]
-#     # this really depends on the input range. it could happen that the range is not meaningful
-#     ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
-#     ToTensord(keys=["image", "mask"]),
-# ]
 
 
 def get_resize_transform(
@@ -375,7 +448,7 @@ def get_resize_transform(
     )
 
 
-def get_patch_transform(
+def get_patch_center_gaussian_transform(
     size: Sequence[int] = (96, 96, 96),
     target_pixel_dim: tuple[float, float, float] = TARGET_PIXEL_DIM,
     target_spatial_size: tuple[int, int, int] = TARGET_SPATIAL_SIZE,
@@ -396,6 +469,28 @@ def get_patch_transform(
     )
 
 
+def get_patch_positive_center_transform(
+    size: Sequence[int] = (96, 96, 96),
+    target_pixel_dim: tuple[float, float, float] = TARGET_PIXEL_DIM,
+    target_spatial_size: tuple[int, int, int] = TARGET_SPATIAL_SIZE,
+    pos_center_prob: float = POS_CENTER_PROB,
+):
+    # Make a copy of the pipeline transforms
+    transforms = get_default_transforms(target_pixel_dim, target_spatial_size)
+    return Compose(
+        transforms[:-1]
+        + [
+            PositiveBiasedRandomCrop(
+                keys=["image", "mask"],
+                positive_key="mask",
+                roi_size=size,
+                positive_probability=pos_center_prob,
+            )
+        ]
+        + transforms[-1:]
+    )
+
+
 def get_std_transform(
     target_pixel_dim: tuple[float, float, float] = TARGET_PIXEL_DIM,
     target_spatial_size: tuple[int, int, int] = TARGET_SPATIAL_SIZE,
@@ -410,14 +505,27 @@ def get_transform(
     target_pixel_dim: tuple[float, float, float] = TARGET_PIXEL_DIM,
     target_spatial_size: tuple[int, int, int] = TARGET_SPATIAL_SIZE,
     sigma_ratio: float = GOOD_SIGMA_RATIO,
+    pos_center_prob: float = POS_CENTER_PROB,
 ) -> Callable:
     """Get the transformation function based on the type."""
     size = [size] * 3 if isinstance(size, int) else size
     match type_:
         case TransformType.RESIZE:
             return get_resize_transform(size, target_pixel_dim, target_spatial_size)
-        case TransformType.PATCH:
-            return get_patch_transform(size, target_pixel_dim, target_spatial_size, sigma_ratio)
+        case TransformType.PATCH_CENTER_GAUSSIAN:
+            return get_patch_center_gaussian_transform(
+                size,
+                target_pixel_dim,
+                target_spatial_size,
+                sigma_ratio,
+            )
+        case TransformType.PATCH_POS_CENTER:
+            return get_patch_positive_center_transform(
+                size,
+                target_pixel_dim,
+                target_spatial_size,
+                pos_center_prob,
+            )
         case TransformType.STD:
             return get_std_transform(target_pixel_dim, target_spatial_size)
         case _:

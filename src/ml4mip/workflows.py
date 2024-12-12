@@ -65,7 +65,8 @@ def run_training(cfg: Config) -> None:
 
     if (
         cfg.val_inference_mode == trainer.InferenceMode.SLIDING_WINDOW
-        and cfg.dataset.transform != TransformType.PATCH
+        and cfg.dataset.transform
+        not in (TransformType.PATCH_POS_CENTER, TransformType.PATCH_CENTER_GAUSSIAN)
     ):
         msg = (
             "Sliding window validation is only supported for patch-based datasets. "
@@ -104,6 +105,7 @@ def run_training(cfg: Config) -> None:
 
     # TODO: parameterize loss function and metric
     # TODO: use smooth dice loss to for empty masks
+    # TODO: change metric to other to Dice
     loss_fn = DiceCELoss(sigmoid=True)
     metrics = get_metrics()
 

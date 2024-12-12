@@ -251,20 +251,18 @@ def plot_comparison(
 
 # TODO: does currently only work with binary volumes
 # Update so the skeleton and graph can be displayed too.
-def plot_3d_volume(binary_volume):
+def plot_3d_volume(binary_volume, voxel_limit=100_000):
     if binary_volume is not None and binary_volume.ndim != 3:
         msg = f"Input binary volume must be 3D, but got shape: {binary_volume.shape}"
         raise ValueError(msg)
 
-    # Define the voxel limit
-    VOXEL_LIMIT = 100_000
     # Calculate the number of voxels in the original volume
     num_voxels = np.prod(binary_volume.shape)
-    if num_voxels > VOXEL_LIMIT:
-        msg = f"Volume exceeds the voxel limit ({VOXEL_LIMIT}). Downsampling for visualization."
+    if num_voxels > voxel_limit:
+        msg = f"Volume exceeds the voxel limit ({voxel_limit}). Downsampling for visualization."
         print(msg)
         # Calculate the downsampling factor
-        downsample_factor = (VOXEL_LIMIT / num_voxels) ** (1 / 3)
+        downsample_factor = (voxel_limit / num_voxels) ** (1 / 3)
         # Compute the target shape
         target_shape = tuple(int(s * downsample_factor) for s in binary_volume.shape)
         # Downsample the volume

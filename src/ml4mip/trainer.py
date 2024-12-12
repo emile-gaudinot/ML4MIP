@@ -199,10 +199,11 @@ def validate(
                 rescaled_outputs = model(rescaled_images)
                 # Rescale the output back to the original image size
                 original_size = images.shape[2:]  # Assuming (B, C, H, W, D) format
+                # TODO: Here maybe it is better to apply sigmoid and create binary mask.
                 outputs = F.interpolate(
                     rescaled_outputs,
                     size=original_size,
-                    mode="trilinear",
+                    mode="trilinear",  # TODO: debatable if trinlinear is the best choice / maybe nearest
                     align_corners=False,
                 )
             case _:
