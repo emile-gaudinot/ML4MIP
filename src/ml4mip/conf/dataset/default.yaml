@@ -1,8 +1,2 @@
 defaults:
   - base_dataset
-
-data_dir: "/data/training_data"
-image_suffix: "img.nii.gz"
-mask_suffix: "label.nii.gz"
-transform: PATCH
-split_ratio: 0.9
