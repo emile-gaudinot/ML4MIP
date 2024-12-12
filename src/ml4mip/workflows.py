@@ -7,7 +7,7 @@ import mlflow
 import mlflow.pytorch
 import torch
 from hydra.core.config_store import ConfigStore
-from monai.losses import DiceCELoss
+from monai.losses import DiceLoss
 from omegaconf import MISSING
 from torch import optim
 from torch.utils.data import DataLoader
@@ -105,8 +105,7 @@ def run_training(cfg: Config) -> None:
 
     # TODO: parameterize loss function and metric
     # TODO: use smooth dice loss to for empty masks
-    # TODO: change metric to other to Dice
-    loss_fn = DiceCELoss(sigmoid=True)
+    loss_fn = DiceLoss(sigmoid=True)
     metrics = get_metrics()
 
     # Initialize MLflow
@@ -180,7 +179,7 @@ def run_evaluation(cfg: Config):
 
     # TODO: parameterize loss function and metric
     # TODO: use smooth dice loss to for empty masks
-    loss_fn = DiceCELoss(sigmoid=True)
+    loss_fn = DiceLoss(sigmoid=True)
     metrics = get_metrics()
 
     # Initialize MLflow
