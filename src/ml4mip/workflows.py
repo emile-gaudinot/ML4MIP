@@ -48,6 +48,7 @@ class Config:
     plot_3d: bool = False  # currently 3d plotting is not efficient enough.
     extract_graph: bool = False
     inference: trainer.InferenceConfig = field(default_factory=trainer.InferenceConfig)
+    pretrained_model_path: str | None = None
 
 
 _cs = ConfigStore.instance()
@@ -95,6 +96,10 @@ def run_training(cfg: Config) -> None:
 
     # Model and optimizer
     model = get_model(cfg.model)
+    if cfg.pretrained_model_path:
+        state_dict = torch.load(cfg.pretrained_model_path)
+        model.load_state_dict(state_dict)
+        logger.info(f"Loaded pretrained model from {cfg.pretrained_model_path}")
     model = model.to(device)
 
     # TODO: learning rate scheduler
@@ -125,7 +130,7 @@ def run_training(cfg: Config) -> None:
 
     # TODO: parameterize loss function and metric
     # TODO: use smooth dice loss to for empty masks
-    loss_fn = DiceLoss(sigmoid=True)
+    loss_fn = DiceLoss(sigmoid=True, include_background=False)
     metrics = get_metrics()
 
     # Initialize MLflow

@@ -44,8 +44,11 @@ POS_CENTER_PROB = 0.75
 class DatasetConfig:
     # Don't change these values unless you know what you are doing:
     data_dir: str = "/data/training_data"  # path to the data in the directory
+    mask_dir: str = "/data/mask_data"  # path to the data in the directory
     image_suffix: str = ".img.nii.gz"
     mask_suffix: str = ".label.nii.gz"
+    image_prefix: str = ""
+    mask_prefix: str = ""
     transform: TransformType = TransformType.PATCH_POS_CENTER
     size: tuple[int, int, int] = (96, 96, 96)
     split_ratio: float = 0.9
@@ -71,6 +74,9 @@ def get_dataset(cfg: DatasetConfig) -> tuple[Dataset, Dataset]:
     """Return the training and validation datasets."""
     train_dataset = NiftiDataset(
         cfg.data_dir,
+        mask_dir=cfg.mask_dir,
+        image_prefix=cfg.image_prefix,
+        mask_prefix=cfg.mask_prefix,
         image_suffix=cfg.image_suffix,
         mask_suffix=cfg.mask_suffix,
         transform=get_transform(
@@ -88,6 +94,9 @@ def get_dataset(cfg: DatasetConfig) -> tuple[Dataset, Dataset]:
 
     val_dataset = NiftiDataset(
         cfg.data_dir,
+        mask_dir=cfg.mask_dir,
+        image_prefix=cfg.image_prefix,
+        mask_prefix=cfg.mask_prefix,
         image_suffix=cfg.image_suffix,
         mask_suffix=cfg.mask_suffix,
         transform=get_transform(
@@ -118,30 +127,50 @@ class NiftiDataset(Dataset):
     def __init__(
         self,
         data_dir: str | Path,
+        mask_dir: str | Path | None = None,
         image_suffix: str = ".img.nii.gz",
         mask_suffix: str = ".label.nii.gz",
+        image_prefix: str = "",
+        mask_prefix: str = "",
         transform: Callable | None = None,
         train: bool = True,
         split_ratio: float = 0.9,
         max_samples: int | None = None,
     ) -> None:
         self.data_dir: Path = Path(data_dir)
+        self.mask_dir: Path = self.data_dir
+
+        if mask_dir is not None:
+            self.mask_dir = Path(mask_dir)
+
         self.image_suffix: str = image_suffix
         self.mask_suffix: str = mask_suffix
+        self.image_prefix: str = image_prefix
+        self.mask_prefix: str = mask_prefix
+
         self.transform: Callable | None = transform
         # Initialize the loader, very import to ensure channel first!
         self.loader = LoadImaged(keys=["image", "mask"], ensure_channel_first=True)
 
         # Collect image and mask file paths
-        image_files: list[Path] = sorted(self.data_dir.glob(f"*{self.image_suffix}"))
-        mask_files: list[Path] = sorted(self.data_dir.glob(f"*{self.mask_suffix}"))
+        image_files: list[Path] = sorted(
+            self.data_dir.glob(f"{self.image_prefix}*{self.image_suffix}")
+        )
+        mask_files: list[Path] = sorted(
+            self.mask_dir.glob(f"{self.mask_prefix}*{self.mask_suffix}")
+        )
 
-        if len(image_files) == 0 or len(mask_files) == 0:
-            msg = "No image or mask files found. Verify the data directory and image and mask suffixes."
+        if len(image_files) == 0:
+            msg = f"No image files found. {self.data_dir}"
+            raise ValueError(msg)
+
+        if len(mask_files) == 0:
+            msg = f"No mask files found. (mask_dir: {self.mask_dir})"
             raise ValueError(msg)
 
         # Split the dataset into training and validation sets
         data_files = list(zip(image_files, mask_files, strict=True))
+        # print(data_files) # check if mapping is correct
         data_files = self.get_sample(data_files, train=train, split_ratio=split_ratio)
         self.image_files, self.mask_files = zip(*data_files, strict=True)
 

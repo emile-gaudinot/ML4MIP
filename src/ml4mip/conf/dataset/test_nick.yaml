@@ -1,0 +1,13 @@
+defaults:
+  - base_dataset
+
+data_dir: "/home/nickpralle/Uni/Master/Semester_2/ML4MIP/TestData/Task08_HepaticVessel/imagesTr"
+mask_dir: "/home/nickpralle/Uni/Master/Semester_2/ML4MIP/TestData/Task08_HepaticVessel/labelsTr"
+image_suffix: ".nii.gz"
+mask_suffix: ".nii.gz"
+image_prefix: "hepaticvessel_"
+mask_prefix: "hepaticvessel_"
+transform: PATCH_CENTER_GAUSSIAN
+split_ratio: 0.9
+target_spatial_size: [128, 128, 128]
+target_pixel_dim: [1.0, 1.0, 1.0]

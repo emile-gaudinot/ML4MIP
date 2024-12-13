@@ -1,6 +1,7 @@
 import logging
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 import torch
 import torch.nn.functional as F
@@ -13,7 +14,6 @@ from tqdm import tqdm
 from ml4mip.utils.logging import log_metrics
 from ml4mip.utils.metrics import MetricsManager
 from ml4mip.utils.torch import save_checkpoint
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
