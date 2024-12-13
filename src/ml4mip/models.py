@@ -7,12 +7,14 @@ from omegaconf import MISSING
 from torch.utils.checkpoint import checkpoint
 
 from ml4mip.segment_anything import sam_model_registry
+from monai.networks.nets import UNet
 
 
 class ModelType(Enum):
     UNETR_PTR = "unetr_ptr"
     UNETR = "unetr"
     UNET = "unet"
+    UNETMONAI1 = "unet_moain_1"
     MEDSAM = "medsam"
 
 
@@ -52,52 +54,78 @@ class UNetWrapper(torch.nn.Module):
 
         #First block without checkpointing
         self.firstBlock = torch.nn.Sequential(
-            torch.nn.Conv3d(1, 12, kernel_size=3, padding=1),
+            torch.nn.Conv3d(1, 24, kernel_size=3, padding=1),
+            torch.nn.BatchNorm3d(24),
             torch.nn.ReLU()
         )
 
         #Sequentials for Checkpointin
 
         self.en1 = torch.nn.Sequential(
-            torch.nn.Conv3d(12, 12, kernel_size=3, padding=1), 
+            torch.nn.Conv3d(24, 24, kernel_size=3, padding=1), 
+            torch.nn.BatchNorm3d(24),
             torch.nn.ReLU()
         )
 
         self.en2 = torch.nn.Sequential(
             torch.nn.MaxPool3d(2),
-            torch.nn.Conv3d(12, 24, kernel_size=3, padding=1), torch.nn.ReLU(),
-            torch.nn.Conv3d(24, 24, kernel_size=3, padding=1), torch.nn.ReLU()
+            torch.nn.Conv3d(24, 48, kernel_size=3, padding=1), 
+            torch.nn.BatchNorm3d(48),
+            torch.nn.ReLU(),
+            torch.nn.Conv3d(48, 48, kernel_size=3, padding=1), 
+            torch.nn.BatchNorm3d(48),
+            torch.nn.ReLU()
         )
 
         self.en3 = torch.nn.Sequential(
             torch.nn.MaxPool3d(2),
-            torch.nn.Conv3d(24, 48, kernel_size=3, padding=1), torch.nn.ReLU(),
-            torch.nn.Conv3d(48, 48, kernel_size=3, padding=1), torch.nn.ReLU()
+            torch.nn.Conv3d(48, 96, kernel_size=3, padding=1), 
+            torch.nn.BatchNorm3d(96),
+            torch.nn.ReLU(),
+            torch.nn.Conv3d(96, 96, kernel_size=3, padding=1), 
+            torch.nn.BatchNorm3d(96),
+            torch.nn.ReLU()
         )
 
         self.valley = torch.nn.Sequential(
             torch.nn.MaxPool3d(2),
-            torch.nn.Conv3d(48, 96, kernel_size=3, padding=1), torch.nn.ReLU(),
-            torch.nn.Conv3d(96, 96, kernel_size=3, padding=1), torch.nn.ReLU(),
-            torch.nn.ConvTranspose3d(96, 48, 2, 2)
+            torch.nn.Conv3d(96, 192, kernel_size=3, padding=1), 
+            torch.nn.BatchNorm3d(192),
+            torch.nn.ReLU(),
+            torch.nn.Conv3d(192, 192, kernel_size=3, padding=1), 
+            torch.nn.BatchNorm3d(192),
+            torch.nn.ReLU(),
+            torch.nn.ConvTranspose3d(192, 96, 2, 2)
         )
 
         self.dec1 = torch.nn.Sequential(
-            torch.nn.Conv3d(96, 48, kernel_size=3, padding=1), torch.nn.ReLU(),
-            torch.nn.Conv3d(48, 48, kernel_size=3, padding=1), torch.nn.ReLU(),
-            torch.nn.ConvTranspose3d(48, 24, 2, 2)
+            torch.nn.Conv3d(192, 96, kernel_size=3, padding=1), 
+            torch.nn.BatchNorm3d(96),
+            torch.nn.ReLU(),
+            torch.nn.Conv3d(96, 96, kernel_size=3, padding=1), 
+            torch.nn.BatchNorm3d(96),
+            torch.nn.ReLU(),
+            torch.nn.ConvTranspose3d(96, 48, 2, 2)
         )
 
         self.dec2 = torch.nn.Sequential(
-            torch.nn.Conv3d(48, 24, kernel_size=3, padding=1), torch.nn.ReLU(),
-            torch.nn.Conv3d(24, 24, kernel_size=3, padding=1), torch.nn.ReLU(),
-            torch.nn.ConvTranspose3d(24, 12, 2, 2)
+            torch.nn.Conv3d(96, 48, kernel_size=3, padding=1), 
+            torch.nn.BatchNorm3d(48),
+            torch.nn.ReLU(),
+            torch.nn.Conv3d(48, 48, kernel_size=3, padding=1),
+            torch.nn.BatchNorm3d(48),
+            torch.nn.ReLU(),
+            torch.nn.ConvTranspose3d(48, 24, 2, 2)
         )
 
         self.dec3 = torch.nn.Sequential(
-            torch.nn.Conv3d(24, 12, kernel_size=3, padding=1), torch.nn.ReLU(),
-            torch.nn.Conv3d(12, 12, kernel_size=3, padding=1), torch.nn.ReLU(),
-            torch.nn.Conv3d(12, 1, kernel_size=3, padding=1)
+            torch.nn.Conv3d(48, 24, kernel_size=3, padding=1), 
+            torch.nn.BatchNorm3d(24),
+            torch.nn.ReLU(),
+            torch.nn.Conv3d(24, 24, kernel_size=3, padding=1), 
+            torch.nn.BatchNorm3d(24),
+            torch.nn.ReLU(),
+            torch.nn.Conv3d(24, 1, kernel_size=3, padding=1)
         )
 
         #Sigmoid for output
@@ -141,6 +169,15 @@ def get_model(cfg: ModelConfig) -> torch.nn.Module:
             model = UnetrPtrJitWrapper(model)
         case ModelType.UNET:
             model = UNetWrapper()
+        case ModelType.UNETMONAI1:
+            model = UNet(
+                spatial_dims=3,
+                in_channels=1,
+                out_channels=1,
+                channels=(16, 32, 64, 128, 256),
+                strides=(2, 2, 2, 2),
+                num_res_units=2,
+            )
         case ModelType.MEDSAM:
             MedSAM_CKPT_PATH = cfg.checkpoint_path
             model = sam_model_registry["vit_b"](checkpoint=MedSAM_CKPT_PATH)
