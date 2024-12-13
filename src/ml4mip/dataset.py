@@ -162,6 +162,7 @@ class NiftiDataset(Dataset):
 
         # Split the dataset into training and validation sets
         data_files = list(zip(image_files, mask_files, strict=True))
+        # print(data_files) # check if mapping is correct
         data_files = self.get_sample(data_files, train=train, split_ratio=split_ratio)
         self.image_files, self.mask_files = zip(*data_files, strict=True)
 
