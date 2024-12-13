@@ -44,7 +44,7 @@ POS_CENTER_PROB = 0.75
 class DatasetConfig:
     # Don't change these values unless you know what you are doing:
     data_dir: str = "/data/training_data"  # path to the data in the directory
-    mask_dir: str = "/data/mask_data"  # path to the data in the directory
+    mask_dir: str = "/data/training_data"  # path to the data in the directory
     image_suffix: str = ".img.nii.gz"
     mask_suffix: str = ".label.nii.gz"
     image_prefix: str = ""
