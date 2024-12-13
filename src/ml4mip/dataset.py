@@ -416,14 +416,14 @@ def get_default_transforms(
             pixdim=target_pixel_dim,
             mode=("bilinear", "nearest"),
         ),
-        # 2) Resize the image and mask to a target spatial size without distorting the aspect ratio
+        # 2) Scale the intensity of the image to [0, 1]
+        # this really depends on the input range. it could happen that the range is not meaningful
+        ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
+        # 3) Resize the image and mask to a target spatial size without distorting the aspect ratio
         ResizeWithPadOrCropd(
             keys=["image", "mask"],
             spatial_size=target_spatial_size,
         ),
-        # 3) Scale the intensity of the image to [0, 1]
-        # this really depends on the input range. it could happen that the range is not meaningful
-        ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
         ToTensord(keys=["image", "mask"]),
     ]
 

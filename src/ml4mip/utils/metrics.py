@@ -25,7 +25,7 @@ class JaccardIndex(Metric):
     def __call__(self, y_pred: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         """Compute the Jaccard Index for a batch and store it."""
         # Initialize DiceLoss to compute Jaccard Index
-        jaccard_loss = DiceLoss(jaccard=True, include_background=False, reduction="mean")
+        jaccard_loss = DiceLoss(jaccard=True, include_background=True, reduction="mean")
 
         # Compute the Jaccard Index
         jaccard_index = 1 - jaccard_loss(y_pred, y)

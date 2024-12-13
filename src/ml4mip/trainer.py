@@ -1,8 +1,10 @@
 import logging
+from dataclasses import dataclass
 from enum import Enum
 
 import torch
 import torch.nn.functional as F
+from hydra.core.config_store import ConfigStore
 from monai.inferers import sliding_window_inference
 from torch import nn, optim
 from torch.utils.data import DataLoader
@@ -10,6 +12,8 @@ from tqdm import tqdm
 
 from ml4mip.utils.logging import log_metrics
 from ml4mip.utils.metrics import MetricsManager
+from ml4mip.utils.torch import save_checkpoint
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +137,67 @@ class InferenceMode(Enum):
     STD = "standard"
 
 
+@dataclass
+class InferenceConfig:
+    mode: InferenceMode = InferenceMode.SLIDING_WINDOW
+    sw_size: tuple[int, int, int] = (96, 96, 96)
+    sw_batch_size: int = 4
+    sw_overlap: float = 0.25
+    model_input_size: tuple[int, int, int] = (96, 96, 96)
+
+
+_cs = ConfigStore.instance()
+_cs.store(
+    name="base_inference_config",
+    node=InferenceConfig,
+)
+
+
+def inference(
+    images: torch.Tensor,
+    model: nn.Module,
+    cfg: InferenceConfig,
+):
+    match cfg.mode:
+        case InferenceMode.SLIDING_WINDOW:
+            # sliding_window_inference divides the input image into smaller overlapping windows
+            # of the specified size (sw_size). It processes each window independently, allowing
+            # for efficient inference on large images that may not fit in memory.
+            # The predictions from all windows are then stitched together to reconstruct
+            # the full-size output, averaging overlapping regions to ensure smooth transitions
+            # and reduce artifacts.
+            outputs = sliding_window_inference(
+                inputs=images,
+                roi_size=cfg.sw_size,
+                sw_batch_size=cfg.sw_batch_size,
+                predictor=model,
+                overlap=cfg.sw_overlap,
+            )
+        case InferenceMode.RESCALE:
+            # Rescale the input image to the model input size
+            rescaled_images = F.interpolate(
+                images,
+                size=cfg.model_input_size,
+                mode="trilinear",
+                align_corners=False,
+            )
+            # Run inference on the rescaled image
+            rescaled_outputs = model(rescaled_images)
+            # Rescale the output back to the original image size
+            original_size = images.shape[2:]  # Assuming (B, C, H, W, D) format
+            # TODO: Here maybe it is better to apply sigmoid and create binary mask.
+            outputs = F.interpolate(
+                rescaled_outputs,
+                size=original_size,
+                mode="trilinear",  # TODO: debatable if trinlinear is the best choice / maybe nearest
+                align_corners=False,
+            )
+        case _:
+            outputs = model(images)
+
+    return outputs
+
+
 # --- VALIDATION FUNCTION ---
 @torch.no_grad()
 def validate(
@@ -141,11 +206,7 @@ def validate(
     loss_fn: nn.Module,
     metrics: MetricsManager,
     device: torch.device,
-    inference_mode: InferenceMode = InferenceMode.SLIDING_WINDOW,
-    sw_size: int = 96,
-    sw_batch_size: int = 4,
-    sw_overlap: float = 0.25,
-    model_input_size: tuple[int, int, int] = (96, 96, 96),
+    inference_cfg: InferenceConfig,
 ) -> tuple[float, float]:
     """Validate the model on the validation dataset.
 
@@ -172,42 +233,11 @@ def validate(
     for batch in progress_bar:
         images, masks = batch
         images, masks = images.to(device), masks.to(device)
-        match inference_mode:
-            case InferenceMode.SLIDING_WINDOW:
-                # sliding_window_inference divides the input image into smaller overlapping windows
-                # of the specified size (sw_size). It processes each window independently, allowing
-                # for efficient inference on large images that may not fit in memory.
-                # The predictions from all windows are then stitched together to reconstruct
-                # the full-size output, averaging overlapping regions to ensure smooth transitions
-                # and reduce artifacts.
-                outputs = sliding_window_inference(
-                    inputs=images,
-                    roi_size=(sw_size, sw_size, sw_size),
-                    sw_batch_size=sw_batch_size,
-                    predictor=model,
-                    overlap=sw_overlap,
-                )
-            case InferenceMode.RESCALE:
-                # Rescale the input image to the model input size
-                rescaled_images = F.interpolate(
-                    images,
-                    size=model_input_size,
-                    mode="trilinear",
-                    align_corners=False,
-                )
-                # Run inference on the rescaled image
-                rescaled_outputs = model(rescaled_images)
-                # Rescale the output back to the original image size
-                original_size = images.shape[2:]  # Assuming (B, C, H, W, D) format
-                # TODO: Here maybe it is better to apply sigmoid and create binary mask.
-                outputs = F.interpolate(
-                    rescaled_outputs,
-                    size=original_size,
-                    mode="trilinear",  # TODO: debatable if trinlinear is the best choice / maybe nearest
-                    align_corners=False,
-                )
-            case _:
-                outputs = model(images)
+        outputs = inference(
+            images=images,
+            model=model,
+            cfg=inference_cfg,
+        )
         loss = loss_fn(outputs, masks)
         val_loss += loss.item()
         metrics(y_pred=outputs, y=masks)
@@ -219,7 +249,7 @@ def validate(
     }
 
 
-# --- FINE-TUNING FUNCTION ---
+# --- TRAINING FUNCTION ---
 def train(
     model: nn.Module,
     train_loader: DataLoader,
@@ -227,15 +257,13 @@ def train(
     loss_fn: nn.Module,
     metrics: MetricsManager,
     device: torch.device,
+    current_epoch: int,
     num_epochs: int,
+    inference_cfg: InferenceConfig,
+    checkpoint_dir: str | Path,
     val_loader: DataLoader | None = None,
     scheduler: torch.optim.lr_scheduler._LRScheduler | None = None,
     model_type: str | None = None,
-    val_inference_mode: InferenceMode = InferenceMode.SLIDING_WINDOW,
-    val_sw_size: int = 96,
-    val_sw_batch_size: int = 4,
-    val_sw_overlap: float = 0.25,
-    val_model_input_size: tuple[int, int, int] = (96, 96, 96),
 ) -> None:
     """Fine-tune the model for several epochs.
 
@@ -248,15 +276,13 @@ def train(
         dice_metric: Dice metric.
         device: The device to use.
         num_epochs: Number of epochs for fine-tuning.
+        inference_cfg: Inference configuration.
+        checkpoint_dir: Directory to save checkpoints.
+        val_loader: DataLoader for validation dataset (optional).
         scheduler: Learning rate scheduler (optional).
-        val_inference_mode: Inference mode for validation. Default is InferenceMode.SLIDING_WINDOW.
-        val_sw_size: Sliding window size for validation inference. Default is 96.
-        val_sw_batch_size: Sliding window batch size. Default is 4.
-        val_sw_overlap: Sliding window overlap. Default is 0.25.
-        val_model_input_size: Input size for rescale inference. Default is (96, 96, 96).
     """
     global_batch_idx = 0
-    for epoch in range(num_epochs):
+    for epoch in range(current_epoch, num_epochs):
         msg = f"Epoch {epoch + 1}/{num_epochs}: training..."
         logger.info(msg)
         # Train for one epoch
@@ -271,7 +297,13 @@ def train(
             model_type=model_type,
         )
         global_batch_idx += len(train_loader)
-
+        save_checkpoint(
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            epoch=epoch,
+            checkpoint_dir=checkpoint_dir,
+        )
         log_metrics(
             "train",
             train_metrics,
@@ -292,11 +324,7 @@ def train(
                 loss_fn=loss_fn,
                 metrics=metrics,
                 device=device,
-                inference_mode=val_inference_mode,
-                sw_size=val_sw_size,
-                sw_batch_size=val_sw_batch_size,
-                sw_overlap=val_sw_overlap,
-                model_input_size=val_model_input_size,
+                inference_cfg=inference_cfg,
             )
             log_metrics(
                 "val",
