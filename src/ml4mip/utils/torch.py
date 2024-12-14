@@ -57,6 +57,52 @@ def save_model(model, model_path: str | Path):
             logger.exception(msg)
 
 
+def save_checkpoint(model, optimizer, epoch, checkpoint_dir: str | Path, scheduler=None):
+    checkpoint_dir = Path(checkpoint_dir)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    path = checkpoint_dir / f"checkpoint_{epoch}.pt"
+    if path.exists():
+        msg = f"Checkpoint {path} already exists. Overwriting..."
+        logger.warning(msg)
+
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
+            "epoch": epoch,
+        },
+        path,
+    )
+
+
+# Load checkpoint
+def load_checkpoint(model, optimizer, checkpoint_dir: str | Path, scheduler=None) -> int:
+    checkpoint_dir = Path(checkpoint_dir)
+    # Find the latest checkpoint
+    checkpoints = list(checkpoint_dir.glob("checkpoint_*.pt"))
+    if not checkpoints:
+        msg = f"No checkpoints found in {checkpoint_dir}"
+        logger.info(msg)
+        return 0
+
+    path = max(checkpoints, key=lambda fname: fname.stat().st_mtime)
+    msg = f"Loading checkpoint from {path}"
+    logger.info(msg)
+
+    checkpoint = torch.load(path, map_location=detect_device())
+    required_keys = ["model_state_dict", "optimizer_state_dict", "epoch"]
+    for key in required_keys:
+        if key not in checkpoint:
+            raise ValueError(f"Checkpoint {path} is missing key: {key}")
+    model.load_state_dict(checkpoint["model_state_dict"])
+    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    if scheduler and checkpoint["scheduler_state_dict"]:
+        scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+    return checkpoint["epoch"]  # Start training from the next epoch
+
+
 def load_model(model_path: str | Path):
     return torch.load(model_path)
 

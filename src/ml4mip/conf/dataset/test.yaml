@@ -2,9 +2,9 @@ defaults:
   - base_dataset
 
 data_dir: "/Users/pvmeng/Documents/ML4MIP/data/tiny_data"
+mask_dir: "/Users/pvmeng/Documents/ML4MIP/data/tiny_data"
 image_suffix: "avg.nii.gz"
 mask_suffix: "avg_seg.nii.gz"
-transform: PATCH
 split_ratio: 0.9
 target_spatial_size: [128, 128, 128]
 target_pixel_dim: [1.0, 1.0, 1.0]

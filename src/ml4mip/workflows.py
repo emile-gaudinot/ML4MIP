@@ -1,5 +1,6 @@
 import logging
-from dataclasses import dataclass
+import sys
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from ml4mip.graph_extraction import extract_graph
 from ml4mip.models import ModelConfig, get_model
 from ml4mip.utils.logging import log_hydra_config_to_mlflow, log_metrics
 from ml4mip.utils.metrics import get_metrics
-from ml4mip.utils.torch import save_model
+from ml4mip.utils.torch import load_checkpoint, save_model
 from ml4mip.visualize import visualize_model
 
 logger = logging.getLogger(__name__)
@@ -39,13 +40,13 @@ class Config:
     lr: float = 1e-4
     num_epochs: int = 10
     model: ModelConfig = MISSING
-    dataset: DatasetConfig = MISSING
+    dataset: DatasetConfig = field(default_factory=DatasetConfig)
     visualize_model: bool = False
-    visualize_model_batches: int = 1
+    visualize_model_val_batches: int = 1
+    visualize_model_train_batches: int = 4
     # TODO: Use more efficient 3d plotting, implement automatic downscaling
     plot_3d: bool = False  # currently 3d plotting is not efficient enough.
     extract_graph: bool = False
-    val_inference_mode: trainer.InferenceMode = trainer.InferenceMode.SLIDING_WINDOW
     val_sw_size: int = 96
     val_sw_batch_size: int = 4
     val_sw_overlap: float = 0.25
@@ -53,6 +54,8 @@ class Config:
     pretrained_model_path: str | None = None 
     epoch_profiling_torch: bool = False
     epoch_profiling_cpy: bool = False
+    inference: trainer.InferenceConfig = field(default_factory=trainer.InferenceConfig)
+    pretrained_model_path: str | None = None
 
 
 _cs = ConfigStore.instance()
@@ -66,10 +69,9 @@ def run_training(cfg: Config) -> None:
     """Prepare data, model, and training loop for fine-tuning."""
     logger.info("Starting model training script")
 
-    if (
-        cfg.val_inference_mode == trainer.InferenceMode.SLIDING_WINDOW
-        and cfg.dataset.transform
-        not in (TransformType.PATCH_POS_CENTER, TransformType.PATCH_CENTER_GAUSSIAN)
+    if cfg.inference.mode == trainer.InferenceMode.SLIDING_WINDOW and cfg.dataset.transform not in (
+        TransformType.PATCH_POS_CENTER,
+        TransformType.PATCH_CENTER_GAUSSIAN,
     ):
         msg = (
             "Sliding window validation is only supported for patch-based datasets. "
@@ -78,7 +80,7 @@ def run_training(cfg: Config) -> None:
         raise ValueError(msg)
 
     if (
-        cfg.val_inference_mode == trainer.InferenceMode.RESCALE
+        cfg.inference.mode == trainer.InferenceMode.RESCALE
         and cfg.dataset.transform != TransformType.RESIZE
     ):
         msg = (
@@ -110,6 +112,29 @@ def run_training(cfg: Config) -> None:
     # TODO: learning rate scheduler
     optimizer = optim.AdamW(model.parameters(), lr=cfg.lr)
 
+    checkpoint_dir = (Path(cfg.model_dir) / f"{cfg.model_tag}").with_suffix("")
+    current_epoch = 0
+    if checkpoint_dir.is_dir() and any(checkpoint_dir.iterdir()):
+        prev_epochs = load_checkpoint(
+            model=model,
+            optimizer=optimizer,
+            checkpoint_dir=checkpoint_dir,
+        )
+        current_epoch = prev_epochs + 1
+        msg = f"Resuming training from epoch {current_epoch}/{cfg.num_epochs} with { cfg.num_epochs - current_epoch} epochs remaining"
+        logger.info(msg)
+    elif checkpoint_dir.exists() and not checkpoint_dir.is_dir():
+        msg = (
+            f"Checkpoint directory {checkpoint_dir} already exists and is not a directory."
+            "The checkpoint dir is model_dir/model_tag."
+            "Please remove the file or specify a different model_tag."
+        )
+        logger.error(msg)
+        sys.exit(1)
+    else:
+        msg = f"Starting training from scratch with {current_epoch} epochs (no checkpoint found)"
+        logger.info(msg)
+
     # TODO: parameterize loss function and metric
     # TODO: use smooth dice loss to for empty masks
     loss_fn = DiceLoss(sigmoid=True, include_background=False)
@@ -131,8 +156,11 @@ def run_training(cfg: Config) -> None:
                 loss_fn=loss_fn,
                 metrics=metrics,
                 device=device,
+                current_epoch=current_epoch,
                 num_epochs=cfg.num_epochs,
                 val_loader=val_loader,
+                inference_cfg=cfg.inference,
+                checkpoint_dir=checkpoint_dir,
                 model_type="medsam"
                 if cfg.model.model_type.value == "medsam"
                 else None,  # TODO: remove once the training logic for medsam is within the class wrapper
@@ -148,17 +176,20 @@ def run_training(cfg: Config) -> None:
             # Save and log the final model
             save_model(
                 model,
-                Path(cfg.model_dir) / cfg.model_tag,
+                checkpoint_dir / "final_model",
             )
             if cfg.visualize_model:
                 visualize_model(
                     val_loader,
                     model,
                     device,
-                    n=cfg.visualize_model_batches,
+                    val_batches=cfg.visualize_model_val_batches,
                     sigmoid=True,
                     plot_3d=cfg.plot_3d,
                     extract_graph=(extract_graph if cfg.extract_graph else None),
+                    train_data_loader=train_loader,
+                    train_batches=cfg.visualize_model_train_batches,
+                    inference_cfg=cfg.inference,
                 )
     except KeyboardInterrupt:
         # Handle manual stopping
@@ -166,7 +197,7 @@ def run_training(cfg: Config) -> None:
         # Save and log the final model
         save_model(
             model,
-            Path(cfg.model_dir) / cfg.model_tag,
+            checkpoint_dir / "manual_stop_model",
         )
 
 
@@ -205,11 +236,7 @@ def run_evaluation(cfg: Config):
             loss_fn=loss_fn,
             metrics=metrics,
             device=device,
-            inference_mode=cfg.val_inference_mode,
-            sw_size=cfg.val_sw_size,
-            sw_batch_size=cfg.val_sw_batch_size,
-            sw_overlap=cfg.val_sw_overlap,
-            model_input_size=cfg.val_model_input_size,
+            inference_cfg=cfg.inference,
         )
         log_metrics(
             "val",
@@ -222,8 +249,9 @@ def run_evaluation(cfg: Config):
                 val_loader,
                 model,
                 device,
-                n=cfg.visualize_model_batches,
+                val_batches=cfg.visualize_model_val_batches,
                 sigmoid=True,
                 plot_3d=cfg.plot_3d,
                 extract_graph=(extract_graph if cfg.extract_graph else None),
+                inference_cfg=cfg.inference,
             )

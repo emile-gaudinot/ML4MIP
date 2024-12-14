@@ -46,7 +46,7 @@ POS_CENTER_PROB = 0.75
 class DatasetConfig:
     # Don't change these values unless you know what you are doing:
     data_dir: str = "/data/training_data"  # path to the data in the directory
-    mask_dir: str = "/data/mask_data"  # path to the data in the directory
+    mask_dir: str = "/data/training_data"  # path to the data in the directory
     image_suffix: str = ".img.nii.gz"
     mask_suffix: str = ".label.nii.gz"
     image_prefix: str = ""
@@ -113,17 +113,25 @@ class NiftiDataset(Dataset):
         self.mask_suffix: str = mask_suffix
         self.image_prefix: str = image_prefix
         self.mask_prefix: str = mask_prefix
-        
+
         self.transform: Callable | None = transform
         # Initialize the loader, very import to ensure channel first!
         self.loader = LoadImaged(keys=["image", "mask"], ensure_channel_first=True)
 
         # Collect image and mask file paths
-        image_files: list[Path] = sorted(self.data_dir.glob(f"{self.image_prefix}*{self.image_suffix}"))
-        mask_files: list[Path] = sorted(self.mask_dir.glob(f"{self.mask_prefix}*{self.mask_suffix}"))
+        image_files: list[Path] = sorted(
+            self.data_dir.glob(f"{self.image_prefix}*{self.image_suffix}")
+        )
+        mask_files: list[Path] = sorted(
+            self.mask_dir.glob(f"{self.mask_prefix}*{self.mask_suffix}")
+        )
 
-        if len(image_files) == 0 or len(mask_files) == 0:
-            msg = "No image or mask files found. Verify the data directory and image and mask suffixes."
+        if len(image_files) == 0:
+            msg = f"No image files found. {self.data_dir}"
+            raise ValueError(msg)
+
+        if len(mask_files) == 0:
+            msg = f"No mask files found. (mask_dir: {self.mask_dir})"
             raise ValueError(msg)
 
         # Split the dataset into training and validation sets
@@ -494,14 +502,14 @@ def get_default_transforms(
             pixdim=target_pixel_dim,
             mode=("bilinear", "nearest"),
         ),
-        # 2) Resize the image and mask to a target spatial size without distorting the aspect ratio
+        # 2) Scale the intensity of the image to [0, 1]
+        # this really depends on the input range. it could happen that the range is not meaningful
+        ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
+        # 3) Resize the image and mask to a target spatial size without distorting the aspect ratio
         ResizeWithPadOrCropd(
             keys=["image", "mask"],
             spatial_size=target_spatial_size,
         ),
-        # 3) Scale the intensity of the image to [0, 1]
-        # this really depends on the input range. it could happen that the range is not meaningful
-        ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
         ToTensord(keys=["image", "mask"]),
     ]
 
