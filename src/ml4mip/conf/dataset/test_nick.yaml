@@ -1,8 +1,8 @@
 defaults:
   - base_dataset
 
-data_dir: "/home/nickpralle/Uni/Master/Semester_2/ML4MIP/TestData/Task08_HepaticVessel/imagesTr"
-mask_dir: "/home/nickpralle/Uni/Master/Semester_2/ML4MIP/TestData/Task08_HepaticVessel/labelsTr"
+data_dir: "/data/ML4MIP-Data/Task08_HepaticVessel/imagesTr"
+mask_dir: "/data/ML4MIP-Data/Task08_HepaticVessel/labelsTr"
 image_suffix: ".nii.gz"
 mask_suffix: ".nii.gz"
 image_prefix: "hepaticvessel_"

@@ -7,12 +7,16 @@ from monai.inferers import sliding_window_inference
 from torch import nn, optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import cProfile
+import pstats
 
 from ml4mip.utils.logging import log_metrics
 from ml4mip.utils.metrics import MetricsManager
+from torch.profiler import profile, record_function, ProfilerActivity
 
 logger = logging.getLogger(__name__)
 
+activities = [ProfilerActivity.CPU, ProfilerActivity.CUDA, ProfilerActivity.XPU]
 
 # --- TRAINING FUNCTION ---
 def train_one_epoch(
@@ -236,6 +240,8 @@ def train(
     val_sw_batch_size: int = 4,
     val_sw_overlap: float = 0.25,
     val_model_input_size: tuple[int, int, int] = (96, 96, 96),
+    torch_profiling: bool = False,
+    cpython_profiling: bool = False,
 ) -> None:
     """Fine-tune the model for several epochs.
 
@@ -259,17 +265,54 @@ def train(
     for epoch in range(num_epochs):
         msg = f"Epoch {epoch + 1}/{num_epochs}: training..."
         logger.info(msg)
-        # Train for one epoch
-        train_metrics = train_one_epoch(
-            model=model,
-            train_loader=train_loader,
-            optimizer=optimizer,
-            metrics=metrics,
-            loss_fn=loss_fn,
-            device=device,
-            batch_idx=global_batch_idx,
-            model_type=model_type,
-        )
+        print(device)
+
+        if torch_profiling:
+            with profile(activities=activities, record_shapes=True) as prof:
+                with record_function("batch"):
+                    # Train for one epoch
+                    train_metrics = train_one_epoch(
+                        model=model,
+                        train_loader=train_loader,
+                        optimizer=optimizer,
+                        metrics=metrics,
+                        loss_fn=loss_fn,
+                        device=device,
+                        batch_idx=global_batch_idx,
+                        model_type=model_type,
+                    )
+            
+            print(prof.key_averages().table())
+            prof.export_chrome_trace(f"trace_epoch_{epoch}.json")
+        elif cpython_profiling:
+            with cProfile.Profile() as pr:
+                # Train for one epoch
+                train_metrics = train_one_epoch(
+                    model=model,
+                    train_loader=train_loader,
+                    optimizer=optimizer,
+                    metrics=metrics,
+                    loss_fn=loss_fn,
+                    device=device,
+                    batch_idx=global_batch_idx,
+                    model_type=model_type,
+                )
+            stats = pstats.Stats(pr)
+            stats.dump_stats(f"cpython_trace_epoch_{epoch}.prof")
+
+        else:
+            # Train for one epoch
+            train_metrics = train_one_epoch(
+                model=model,
+                train_loader=train_loader,
+                optimizer=optimizer,
+                metrics=metrics,
+                loss_fn=loss_fn,
+                device=device,
+                batch_idx=global_batch_idx,
+                model_type=model_type,
+            )
+        
         global_batch_idx += len(train_loader)
 
         log_metrics(

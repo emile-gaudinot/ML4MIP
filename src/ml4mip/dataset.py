@@ -3,6 +3,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from multiprocessing import Pool
+import pickle
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -58,6 +60,9 @@ class DatasetConfig:
     pos_center_prob: float = POS_CENTER_PROB
     max_train_samples: int | None = None
     max_val_samples: int | None = None
+    cache_train_dataset: bool = False
+    cache_val_dataset: bool = False
+    cache_pooling: int = 0
 
 
 _cs = ConfigStore.instance()
@@ -66,50 +71,6 @@ _cs.store(
     name="base_dataset",
     node=DatasetConfig,
 )
-
-
-# TODO: we also need to create training data for the 2D model.
-# This requires then additional data augmentation.
-def get_dataset(cfg: DatasetConfig) -> tuple[Dataset, Dataset]:
-    """Return the training and validation datasets."""
-    train_dataset = NiftiDataset(
-        cfg.data_dir,
-        mask_dir=cfg.mask_dir,
-        image_prefix=cfg.image_prefix,
-        mask_prefix=cfg.mask_prefix,
-        image_suffix=cfg.image_suffix,
-        mask_suffix=cfg.mask_suffix,
-        transform=get_transform(
-            type_=cfg.transform,
-            size=cfg.size,
-            target_pixel_dim=cfg.target_pixel_dim,
-            target_spatial_size=cfg.target_spatial_size,
-            sigma_ratio=cfg.sigma_ratio,
-            pos_center_prob=cfg.pos_center_prob,
-        ),
-        train=True,
-        split_ratio=cfg.split_ratio,
-        max_samples=cfg.max_train_samples,
-    )
-
-    val_dataset = NiftiDataset(
-        cfg.data_dir,
-        mask_dir=cfg.mask_dir,
-        image_prefix=cfg.image_prefix,
-        mask_prefix=cfg.mask_prefix,
-        image_suffix=cfg.image_suffix,
-        mask_suffix=cfg.mask_suffix,
-        transform=get_transform(
-            type_=TransformType.STD,
-            target_pixel_dim=cfg.target_pixel_dim,
-            target_spatial_size=cfg.target_spatial_size,
-        ),
-        train=False,
-        split_ratio=cfg.split_ratio,
-        max_samples=cfg.max_val_samples,
-    )
-    return train_dataset, val_dataset
-
 
 ##### Datasets #####
 
@@ -136,7 +97,12 @@ class NiftiDataset(Dataset):
         train: bool = True,
         split_ratio: float = 0.9,
         max_samples: int | None = None,
+        cache: bool = False,
+        cache_pooling: int = 0,
     ) -> None:
+        self.use_cache = cache
+        self.image_cache = []
+        self.mask_cache = []
         self.data_dir: Path = Path(data_dir)
         self.mask_dir: Path = self.data_dir
 
@@ -179,6 +145,46 @@ class NiftiDataset(Dataset):
                 mask_suffix, ""
             ), f"Image file {img} and mask file {mask} do not match."
 
+        if cache:
+            if cache_pooling != 0:
+                result = np.array_split(range(len(self.image_files)), cache_pooling)
+                with Pool(processes=cache_pooling) as pool: 
+                    pooled_samples = pool.map(self.preprocess_samples, [list(part) for part in result])
+                unpacked_samples = list(zip(*pooled_samples))
+                self.image_cache = sum(unpacked_samples[0], [])
+                self.mask_cache = sum(unpacked_samples[1], [])
+
+            else:
+                images, masks = self.preprocess_samples(range(len(self.image_files)))
+                self.image_cache = images
+                self.mask_cache = masks
+
+    def preprocess_samples(
+        self,
+        sample_list: list
+    ):
+        images = []
+        masks = []
+
+        for img_num in sample_list:
+            data_dict = {
+                "image": self.image_files[img_num],
+                "mask": self.mask_files[img_num],
+            }   
+
+            # Load images and metadata
+            loaded_data = self.loader(data_dict)
+
+            # Apply additional transformations if provided
+            if self.transform:
+                loaded_data = self.transform(loaded_data)
+
+            images.append(loaded_data["image"])
+            masks.append(loaded_data["mask"])
+
+        return (images, masks)
+
+
     @staticmethod
     def get_sample(
         data_files: list[tuple[Path, Path]],
@@ -196,24 +202,75 @@ class NiftiDataset(Dataset):
         return len(self.image_files)
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
-        data_dict = {
-            "image": self.image_files[idx],
-            "mask": self.mask_files[idx],
-        }
+        if self.use_cache:  
+            img = self.image_cache[idx]
+            mask = self.mask_cache[idx]
+            return img, mask
+        else:
+            data_dict = {
+                "image": self.image_files[idx],
+                "mask": self.mask_files[idx],
+            }
 
-        # Load images and metadata
-        loaded_data = self.loader(data_dict)
+            # Load images and metadata
+            loaded_data = self.loader(data_dict)
 
-        # Apply additional transformations if provided
-        if self.transform:
-            loaded_data = self.transform(loaded_data)
+            # Apply additional transformations if provided
+            if self.transform:
+                loaded_data = self.transform(loaded_data)
 
-        # Extract the transformed image and mask
-        img = loaded_data["image"]
-        mask = loaded_data["mask"]
+            # Extract the transformed image and mask
+            img = loaded_data["image"]
+            mask = loaded_data["mask"]
 
-        return img, mask
+            return img, mask
 
+
+# TODO: we also need to create training data for the 2D model.
+# This requires then additional data augmentation.
+def get_dataset(cfg: DatasetConfig) -> tuple[NiftiDataset, NiftiDataset]:
+    """Return the training and validation datasets."""
+    train_dataset = NiftiDataset(
+        cfg.data_dir,
+        mask_dir=cfg.mask_dir,
+        image_prefix=cfg.image_prefix,
+        mask_prefix=cfg.mask_prefix,
+        image_suffix=cfg.image_suffix,
+        mask_suffix=cfg.mask_suffix,
+        transform=get_transform(
+            type_=cfg.transform,
+            size=cfg.size,
+            target_pixel_dim=cfg.target_pixel_dim,
+            target_spatial_size=cfg.target_spatial_size,
+            sigma_ratio=cfg.sigma_ratio,
+            pos_center_prob=cfg.pos_center_prob,
+        ),
+        train=True,
+        split_ratio=cfg.split_ratio,
+        max_samples=cfg.max_train_samples,
+        cache=cfg.cache_train_dataset,
+        cache_pooling=cfg.cache_pooling,
+    )
+
+    val_dataset = NiftiDataset(
+        cfg.data_dir,
+        mask_dir=cfg.mask_dir,
+        image_prefix=cfg.image_prefix,
+        mask_prefix=cfg.mask_prefix,
+        image_suffix=cfg.image_suffix,
+        mask_suffix=cfg.mask_suffix,
+        transform=get_transform(
+            type_=TransformType.STD,
+            target_pixel_dim=cfg.target_pixel_dim,
+            target_spatial_size=cfg.target_spatial_size,
+        ),
+        train=False,
+        split_ratio=cfg.split_ratio,
+        max_samples=cfg.max_val_samples,
+        cache=cfg.cache_val_dataset,
+        cache_pooling=cfg.cache_pooling,
+    )
+    return train_dataset, val_dataset
 
 ##### Transformations #####
 

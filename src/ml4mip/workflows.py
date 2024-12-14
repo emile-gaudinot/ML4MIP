@@ -51,6 +51,8 @@ class Config:
     val_sw_overlap: float = 0.25
     val_model_input_size: tuple[int, int, int] = (96, 96, 96)
     pretrained_model_path: str | None = None 
+    epoch_profiling_torch: bool = False
+    epoch_profiling_cpy: bool = False
 
 
 _cs = ConfigStore.instance()
@@ -139,6 +141,8 @@ def run_training(cfg: Config) -> None:
                 val_sw_batch_size=cfg.val_sw_batch_size,
                 val_sw_overlap=cfg.val_sw_overlap,
                 val_model_input_size=cfg.val_model_input_size,
+                torch_profiling=cfg.epoch_profiling_torch,
+                cpython_profiling=cfg.epoch_profiling_cpy,
             )
 
             # Save and log the final model
