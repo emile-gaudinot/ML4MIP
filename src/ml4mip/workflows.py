@@ -47,6 +47,7 @@ class Config:
     # TODO: Use more efficient 3d plotting, implement automatic downscaling
     plot_3d: bool = False  # currently 3d plotting is not efficient enough.
     extract_graph: bool = False
+    val_inference_mode: trainer.InferenceMode = trainer.InferenceMode.SLIDING_WINDOW
     val_sw_size: int = 96
     val_sw_batch_size: int = 4
     val_sw_overlap: float = 0.25

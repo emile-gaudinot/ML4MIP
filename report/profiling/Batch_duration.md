@@ -21,3 +21,6 @@ per batch: 120s
 
 ram cached:
 per batch: 13s
+
+ssd caches:
+per batch: 30s

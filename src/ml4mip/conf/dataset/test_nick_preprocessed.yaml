@@ -1,0 +1,21 @@
+defaults:
+  - base_dataset
+
+data_dir: "/data/ML4MIP-Data/preprocessed_data/training/"
+mask_dir: "/data/ML4MIP-Data/preprocessed_data/training/"
+image_suffix: ".img.nii.gz"
+mask_suffix: ".label.nii.gz"
+image_prefix: "hepaticvessel_"
+mask_prefix: "hepaticvessel_"
+val_data_dir: "/data/ML4MIP-Data/Task08_HepaticVessel/imagesTr"
+val_mask_dir: "/data/ML4MIP-Data/Task08_HepaticVessel/labelsTr"
+val_image_suffix: ".nii.gz"
+val_mask_suffix: ".nii.gz"
+val_image_prefix: "hepaticvessel_"
+val_mask_prefix: "hepaticvessel_"
+
+transform: PATCH_CENTER_GAUSSIAN
+split_ratio: 0.9
+target_spatial_size: [128, 128, 128]
+target_pixel_dim: [1.0, 1.0, 1.0]
+use_preprocessed_dataset: true

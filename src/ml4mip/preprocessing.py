@@ -32,7 +32,7 @@ def create_patches(
         image_saver = SaveImaged(
             keys=["image"],  # Keys of the items to be saved
             output_dir=output_dir,  # Directory where the files will be saved
-            output_postfix=f"patch[{i}]",  # Postfix for the saved file names
+            output_postfix=f"patch[{i}].img",  # Postfix for the saved file names
             output_ext=".nii.gz",  # File extension
             resample=False,  # Whether to resample the image
             print_log=True,  # Whether to print log messages
