@@ -106,6 +106,7 @@ def train_one_epoch(
             msg = f"Output shape: {outputs.shape} | Mask shape: {masks.shape}"
             logger.warning(msg)
 
+        #print(torch.histogram(masks.cpu(), bins=10, density=True)) # visualize mask value distibution
         loss = loss_fn(outputs, masks)
         metrics(y_pred=outputs, y=masks)
         batch_metric(y_pred=outputs, y=masks)

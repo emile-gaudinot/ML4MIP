@@ -11,3 +11,4 @@ transform: PATCH_CENTER_GAUSSIAN
 split_ratio: 0.9
 target_spatial_size: [128, 128, 128]
 target_pixel_dim: [1.0, 1.0, 1.0]
+mask_operation: BINARY_CLASS
