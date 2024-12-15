@@ -20,3 +20,5 @@ target_spatial_size: [128, 128, 128]
 target_pixel_dim: [1.0, 1.0, 1.0]
 use_preprocessed_dataset: true
 mask_operation: BINARY_CLASS
+multipatch: False
+max_epochs: 20

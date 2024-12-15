@@ -13,6 +13,7 @@ from tqdm import tqdm
 import cProfile
 import pstats
 
+from ml4mip.dataset import ProprocessedNiftiDataset
 from ml4mip.utils.logging import log_metrics
 from ml4mip.utils.metrics import MetricsManager
 from torch.profiler import profile, record_function, ProfilerActivity
@@ -297,7 +298,6 @@ def train(
     for epoch in range(current_epoch, num_epochs):
         msg = f"Epoch {epoch + 1}/{num_epochs}: training..."
         logger.info(msg)
-        print(device)
 
         if torch_profiling:
             with profile(activities=activities, record_shapes=True) as prof:
@@ -345,6 +345,9 @@ def train(
                 model_type=model_type,
             )
         
+        if isinstance(train_loader.dataset, ProprocessedNiftiDataset):
+            train_loader.dataset.next_epoch()
+
         global_batch_idx += len(train_loader)
         save_checkpoint(
             model=model,
