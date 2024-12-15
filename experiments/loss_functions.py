@@ -15,7 +15,7 @@
 # ---
 
 # %%
-from ml4mip.dataset import get_dataset, DatasetConfig,TransformType
+from ml4mip.dataset import DatasetConfig, TransformType, get_dataset
 from ml4mip.visualize import project_mask_2d
 
 # %%
@@ -56,7 +56,6 @@ print(mask.shape, empty_mask.shape, mask_with_all_ones.shape)
 
 # %%
 from monai.losses import DiceLoss
-
 
 loss = DiceLoss(include_background=True)
 pred = empty_mask
