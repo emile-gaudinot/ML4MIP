@@ -12,32 +12,6 @@ from ml4mip.dataset import DatasetConfig, NiftiDataset, get_transform
 logger = logging.getLogger(__name__)
 
 
-def preprocess_samples(
-    self,
-    sample_list: list,
-):
-    images = []
-    masks = []
-
-    for img_num in sample_list:
-        data_dict = {
-            "image": self.image_files[img_num],
-            "mask": self.mask_files[img_num],
-        }
-
-        # Load images and metadata
-        loaded_data = self.loader(data_dict)
-
-        # Apply additional transformations if provided
-        if self.transform:
-            loaded_data = self.transform(loaded_data)
-
-        images.append(loaded_data["image"])
-        masks.append(loaded_data["mask"])
-
-    return (images, masks)
-
-
 def create_patches(
     image,
     mask,
