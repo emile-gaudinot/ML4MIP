@@ -1,0 +1,3 @@
+defaults:
+  - base_preprocessing_config
+  - dataset: default        # Default dataset configuration

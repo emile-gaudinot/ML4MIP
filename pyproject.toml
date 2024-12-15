@@ -189,3 +189,4 @@ formats = "ipynb,py:percent"
 
 [project.scripts]
 ml4mip = "ml4mip.__main__:main"
+preprocessing = "ml4mip.preprocessing:main"
