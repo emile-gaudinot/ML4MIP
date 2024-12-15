@@ -6,11 +6,12 @@ import hydra
 from hydra.core.config_store import ConfigStore
 from monai.transforms import Compose, SaveImaged
 from omegaconf import OmegaConf
+from multiprocessing import Pool
+import numpy as np
 
 from ml4mip.dataset import DatasetConfig, NiftiDataset, get_transform
 
 logger = logging.getLogger(__name__)
-
 
 def create_patches(
     image,
@@ -28,18 +29,37 @@ def create_patches(
     output_dir.mkdir(exist_ok=True, parents=True)
     # 3) repeat n_patches times:
     for i in range(n_patches):
-        saver = SaveImaged(
-            keys=["image", "mask"],  # Keys of the items to be saved
+        image_saver = SaveImaged(
+            keys=["image"],  # Keys of the items to be saved
             output_dir=output_dir,  # Directory where the files will be saved
             output_postfix=f"patch[{i}]",  # Postfix for the saved file names
             output_ext=".nii.gz",  # File extension
             resample=False,  # Whether to resample the image
             print_log=True,  # Whether to print log messages
+            separate_folder=False,
+        )
+
+        mask_saver = SaveImaged(
+            keys=["mask"],  # Keys of the items to be saved
+            output_dir=output_dir,  # Directory where the files will be saved
+            output_postfix=f"patch[{i}].label",  # Postfix for the saved file names
+            output_ext=".nii.gz",  # File extension
+            resample=False,  # Whether to resample the image
+            print_log=True,  # Whether to print log messages
+            separate_folder=False,
         )
         # 3.1) apply transform and save
         patch = transform({"image": image, "mask": mask})
-        saver(patch)
+        image_saver(patch)
+        mask_saver(patch)
 
+def process_subset(index_subset: list[int], base_dataset, post_transforms, n_patches, output_dir):
+    print(index_subset)
+    for i in range(len(index_subset)):
+        local_img, local_msk = base_dataset[index_subset[i]]
+        create_patches(local_img, local_msk, post_transforms, n_patches, output_dir)
+    
+    return None
 
 @dataclass
 class PreprocessingConfig:
@@ -47,6 +67,7 @@ class PreprocessingConfig:
     # current working directory
     output_dir: str = Path.cwd() / "preprocessed_data"
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
+    computation_pool_size: int = 1
 
 
 _cs = ConfigStore.instance()
@@ -91,7 +112,8 @@ def main(cfg: PreprocessingConfig):
         cache_pooling=cfg.dataset.cache_pooling,
     )
 
-    # TODO: multithreading
-    for i in range(len(base_dataset)):
-        image, mask = base_dataset[i]
-        create_patches(image, mask, post_transforms, cfg.n_patches, cfg.output_dir)
+    # run process_subset in computation pool
+    subsets = np.array_split(range(len(base_dataset)), cfg.computation_pool_size)
+    with Pool(processes=cfg.computation_pool_size) as pool: 
+        pool.starmap(process_subset, [(list(part), base_dataset, post_transforms, cfg.n_patches, cfg.output_dir) for part in subsets])
+
