@@ -32,6 +32,10 @@ class TransformType(Enum):
     PATCH_POS_CENTER = "patch_pos"
     STD = "std"
 
+class MaskOperations(Enum):
+    BINARY_CLASS = "binary"
+    STD = "std"
+
 
 # this was calculated after observing the maximum size of the images after the resampling
 TARGET_PIXEL_DIM = (0.35, 0.35, 0.5)
@@ -71,6 +75,7 @@ class DatasetConfig:
     cache_pooling: int = 0
     use_preprocessed_dataset: bool = False
     preprocessed_dataset_epoch: int = 0
+    mask_operation: MaskOperations = MaskOperations.STD
 
 
 _cs = ConfigStore.instance()
@@ -107,12 +112,14 @@ class NiftiDataset(Dataset):
         max_samples: int | None = None,
         cache: bool = False,
         cache_pooling: int = 0,
+        mask_operation: MaskOperations = MaskOperations.STD
     ) -> None:
         self.use_cache = cache
         self.image_cache = []
         self.mask_cache = []
         self.data_dir: Path = Path(data_dir)
         self.mask_dir: Path = self.data_dir
+        self.mask_operation = mask_operation
 
         if mask_dir is not None:
             self.mask_dir = Path(mask_dir)
@@ -237,7 +244,7 @@ class NiftiDataset(Dataset):
 
             # Extract the transformed image and mask
             img = loaded_data["image"]
-            mask = loaded_data["mask"]
+            mask = perform_mask_transformation(loaded_data["mask"], self.mask_operation)
 
             return img, mask
 
@@ -263,6 +270,7 @@ class ProprocessedNiftiDataset(Dataset):
         cache: bool = False,
         cache_pooling: int = 0,
         epoch_num: int = 0,
+        mask_operation: MaskOperations = MaskOperations.STD,
     ) -> None:
         self.use_cache = cache
         self.image_cache = []
@@ -270,6 +278,7 @@ class ProprocessedNiftiDataset(Dataset):
         self.data_dir: Path = Path(data_dir)
         self.mask_dir: Path = self.data_dir
         self.epoch_counter = 0
+        self.mask_operation = mask_operation
 
         if mask_dir is not None:
             self.mask_dir = Path(mask_dir)
@@ -385,7 +394,7 @@ class ProprocessedNiftiDataset(Dataset):
 
             # Extract the transformed image and mask
             img = loaded_data["image"]
-            mask = loaded_data["mask"]
+            mask = perform_mask_transformation(loaded_data["mask"], self.mask_operation)
 
             return img, mask
 
@@ -407,6 +416,7 @@ def get_dataset(cfg: DatasetConfig) -> tuple[NiftiDataset, NiftiDataset] | tuple
             cache=cfg.cache_train_dataset,
             cache_pooling=cfg.cache_pooling,
             epoch_num=cfg.preprocessed_dataset_epoch,
+            mask_operation=cfg.mask_operation,
         )
     else:
         train_dataset = NiftiDataset(
@@ -429,6 +439,7 @@ def get_dataset(cfg: DatasetConfig) -> tuple[NiftiDataset, NiftiDataset] | tuple
             max_samples=cfg.max_train_samples,
             cache=cfg.cache_train_dataset,
             cache_pooling=cfg.cache_pooling,
+            mask_operation=cfg.mask_operation,
         )
 
     val_dataset = NiftiDataset(
@@ -448,6 +459,7 @@ def get_dataset(cfg: DatasetConfig) -> tuple[NiftiDataset, NiftiDataset] | tuple
         max_samples=cfg.max_val_samples,
         cache=cfg.cache_val_dataset,
         cache_pooling=cfg.cache_pooling,
+        mask_operation=cfg.mask_operation,
     )
     return train_dataset, val_dataset
 
@@ -788,3 +800,10 @@ def get_transform(
         case _:
             msg = f"Invalid transform type: {type_}"
             raise ValueError(msg)
+
+def perform_mask_transformation(mask, mask_operation: MaskOperations):
+    if mask_operation == MaskOperations.BINARY_CLASS:
+        mask[mask!=1] = 0
+        return mask
+    else:
+        return mask
