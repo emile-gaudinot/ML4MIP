@@ -21,6 +21,7 @@ from ml4mip.utils.logging import log_hydra_config_to_mlflow, log_metrics
 from ml4mip.utils.metrics import get_metrics
 from ml4mip.utils.torch import load_checkpoint, save_model
 from ml4mip.visualize import visualize_model
+import torch.optim.lr_scheduler as lr_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,7 @@ def run_training(cfg: Config) -> None:
 
     # TODO: learning rate scheduler
     optimizer = optim.AdamW(model.parameters(), lr=cfg.lr)
+    scheduler = lr_scheduler.LinearLR(optimizer, start_factor=1, end_factor=0.1, total_iters=cfg.num_epochs)
 
     checkpoint_dir = (Path(cfg.model_dir) / f"{cfg.model_tag}").with_suffix("")
     current_epoch = 0
@@ -120,6 +122,7 @@ def run_training(cfg: Config) -> None:
             model=model,
             optimizer=optimizer,
             checkpoint_dir=checkpoint_dir,
+            scheduler=scheduler,
         )
         current_epoch = prev_epochs + 1
         msg = f"Resuming training from epoch {current_epoch}/{cfg.num_epochs} with { cfg.num_epochs - current_epoch} epochs remaining"
@@ -162,6 +165,7 @@ def run_training(cfg: Config) -> None:
                 val_loader=val_loader,
                 inference_cfg=cfg.inference,
                 checkpoint_dir=checkpoint_dir,
+                scheduler=scheduler,
                 model_type="medsam"
                 if cfg.model.model_type.value == "medsam"
                 else None,  # TODO: remove once the training logic for medsam is within the class wrapper

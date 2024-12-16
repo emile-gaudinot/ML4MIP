@@ -2,6 +2,7 @@ import logging
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+import gc
 
 import torch
 import torch.nn.functional as F
@@ -297,6 +298,7 @@ def train(
     global_batch_idx = 0
     for epoch in range(current_epoch, num_epochs):
         msg = f"Epoch {epoch + 1}/{num_epochs}: training..."
+        print(f"Epoch learning rate: {optimizer.param_groups[0]["lr"]}")
         logger.info(msg)
 
         if torch_profiling:
@@ -392,3 +394,14 @@ def train(
         # Scheduler step (if applicable)
         if scheduler:
             scheduler.step()
+
+        print(f"CUDA Memory allocated {torch.cuda.memory_allocated()/(1024**2)}MB")
+        print(f"CUDA Memory cached {torch.cuda.memory_reserved()/(1024**2)}MB")
+
+        print("Clear cache")
+        # run python garbage collection and empty gpu cache to prevent full memory training stops
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        print(f"CUDA Memory allocated {torch.cuda.memory_allocated()/(1024**2)}MB")
+        print(f"CUDA Memory cached {torch.cuda.memory_reserved()/(1024**2)}MB")
