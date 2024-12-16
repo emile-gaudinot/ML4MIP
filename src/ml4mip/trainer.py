@@ -298,8 +298,8 @@ def train(
     global_batch_idx = 0
     for epoch in range(current_epoch, num_epochs):
         msg = f"Epoch {epoch + 1}/{num_epochs}: training..."
-        print(f"Epoch learning rate: {optimizer.param_groups[0]["lr"]}")
         logger.info(msg)
+        logger.info(f"Epoch learning rate: {optimizer.param_groups[0]['lr']}")
 
         if torch_profiling:
             with profile(activities=activities, record_shapes=True) as prof:
@@ -316,7 +316,7 @@ def train(
                         model_type=model_type,
                     )
             
-            print(prof.key_averages().table())
+            logger.info(prof.key_averages().table())
             prof.export_chrome_trace(f"trace_epoch_{epoch}.json")
         elif cpython_profiling:
             with cProfile.Profile() as pr:
@@ -395,13 +395,13 @@ def train(
         if scheduler:
             scheduler.step()
 
-        print(f"CUDA Memory allocated {torch.cuda.memory_allocated()/(1024**2)}MB")
-        print(f"CUDA Memory cached {torch.cuda.memory_reserved()/(1024**2)}MB")
+        #logger.info(f"CUDA Memory allocated {torch.cuda.memory_allocated()/(1024**2)}MB")
+        #logger.info(f"CUDA Memory cached {torch.cuda.memory_reserved()/(1024**2)}MB")
 
-        print("Clear cache")
+        #logger.info("garbage collection and clear cache")
         # run python garbage collection and empty gpu cache to prevent full memory training stops
         gc.collect()
         torch.cuda.empty_cache()
 
-        print(f"CUDA Memory allocated {torch.cuda.memory_allocated()/(1024**2)}MB")
-        print(f"CUDA Memory cached {torch.cuda.memory_reserved()/(1024**2)}MB")
+        #logger.info(f"CUDA Memory allocated {torch.cuda.memory_allocated()/(1024**2)}MB")
+        #logger.info(f"CUDA Memory cached {torch.cuda.memory_reserved()/(1024**2)}MB")
