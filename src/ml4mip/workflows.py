@@ -113,7 +113,7 @@ def run_training(cfg: Config) -> None:
 
     # TODO: learning rate scheduler
     optimizer = optim.AdamW(model.parameters(), lr=cfg.lr)
-    scheduler = lr_scheduler.LinearLR(optimizer, start_factor=1, end_factor=0.1, total_iters=cfg.num_epochs)
+    scheduler = lr_scheduler.LinearLR(optimizer, start_factor=1, end_factor=0.01, total_iters=cfg.num_epochs)
 
     checkpoint_dir = (Path(cfg.model_dir) / f"{cfg.model_tag}").with_suffix("")
     current_epoch = 0
