@@ -146,6 +146,10 @@ class ABCNiftiDataset(Dataset, ABC):
     def get_image_mask_files(self) -> tuple[list[Path], list[Path]]:
         pass
 
+    def __len__(self) -> int:
+        image_files, _ = self.get_image_mask_files()
+        return len(image_files)
+
     def init_cache(self):
         if self.cache_pooling != 0:
             image_files, _ = self.get_image_mask_files()
@@ -169,6 +173,7 @@ class ABCNiftiDataset(Dataset, ABC):
         if not isinstance(indices, list):
             return_as_list = False
             indices = [indices]
+
         image_files, mask_files = self.get_image_mask_files()
         images = []
         masks = []
@@ -193,12 +198,14 @@ class ABCNiftiDataset(Dataset, ABC):
         )  # Alternatively use len(output_list) > 1, but could result in unexpected behavior
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
-        if self.use_cache:
-            img = self.image_cache[idx]
-            mask = self.mask_cache[idx]
-            return img, mask
-
-        return self.process_samples(idx)
+        return (
+            (
+                self.image_cache[idx],
+                self.mask_cache[idx],
+            )
+            if self.use_cache
+            else self.process_samples(idx)
+        )
 
     @staticmethod
     def load_image_mask_files(
@@ -326,9 +333,6 @@ class NiftiDataset(ABCNiftiDataset):
     def get_image_mask_files(self):
         return self.image_files, self.mask_files
 
-    def __len__(self) -> int:
-        return len(self.image_files)
-
 
 class GroupedNifitDataset(ABCNiftiDataset):
     """PyTorch Dataset for loading preprocessed 3D NIfTI images and masks from a directory.
@@ -393,12 +397,10 @@ class GroupedNifitDataset(ABCNiftiDataset):
 
     @override
     def get_image_mask_files(self):
-        return self.image_files[self.epoch_counter % self.max_epoch], self.mask_files[
-            self.epoch_counter % self.max_epoch
-        ]
-
-    def __len__(self) -> int:
-        return len(self.image_files[0])
+        return (
+            self.image_files[self.epoch_counter % self.max_epoch],
+            self.mask_files[self.epoch_counter % self.max_epoch],
+        )
 
     def next_epoch(self):
         self.epoch_counter += 1
