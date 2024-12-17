@@ -1,2 +1,4 @@
 defaults:
   - base_dataset
+  
+mask_dir: /data/training_data

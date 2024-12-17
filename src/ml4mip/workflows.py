@@ -8,7 +8,7 @@ import mlflow
 import mlflow.pytorch
 import torch
 from hydra.core.config_store import ConfigStore
-from monai.losses import DiceLoss
+from monai.losses import DiceLoss, DiceCELoss
 from omegaconf import MISSING
 from torch import optim
 from torch.utils.data import DataLoader
@@ -113,7 +113,7 @@ def run_training(cfg: Config) -> None:
 
     # TODO: learning rate scheduler
     optimizer = optim.AdamW(model.parameters(), lr=cfg.lr)
-    scheduler = lr_scheduler.LinearLR(optimizer, start_factor=1, end_factor=0.1, total_iters=cfg.num_epochs)
+    scheduler = lr_scheduler.LinearLR(optimizer, start_factor=1, end_factor=0.01, total_iters=cfg.num_epochs)
 
     checkpoint_dir = (Path(cfg.model_dir) / f"{cfg.model_tag}").with_suffix("")
     current_epoch = 0
@@ -141,7 +141,7 @@ def run_training(cfg: Config) -> None:
 
     # TODO: parameterize loss function and metric
     # TODO: use smooth dice loss to for empty masks
-    loss_fn = DiceLoss(sigmoid=True, include_background=False)
+    loss_fn = DiceCELoss(sigmoid=True, include_background=False, lambda_ce=.66)
     metrics = get_metrics()
 
     # Initialize MLflow
