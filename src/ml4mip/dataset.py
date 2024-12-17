@@ -1,16 +1,20 @@
+import functools
+import logging
+import operator
 import random
+from abc import ABC, abstractmethod, override
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 from multiprocessing import Pool
-import pickle
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from hydra.core.config_store import ConfigStore
 from monai.config import KeysCollection
+from monai.data import MetaTensor
 from monai.transforms import (
     Compose,
     LoadImaged,
@@ -25,12 +29,15 @@ from monai.transforms import (
 from scipy.stats import truncnorm
 from torch.utils.data import Dataset
 
+logger = logging.getLogger(__name__)
+
 
 class TransformType(Enum):
     RESIZE = "resize"
     PATCH_CENTER_GAUSSIAN = "patch_center_gaussian"
     PATCH_POS_CENTER = "patch_pos"
     STD = "std"
+
 
 class MaskOperations(Enum):
     BINARY_CLASS = "binary"
@@ -46,6 +53,7 @@ GOOD_SIGMA_RATIO = 0.1
 POS_CENTER_PROB = 0.75
 
 
+# TODO: maybe instead of suffix and prefix we should use a regex pattern
 @dataclass
 class DatasetConfig:
     # Don't change these values unless you know what you are doing:
@@ -55,12 +63,7 @@ class DatasetConfig:
     mask_suffix: str = ".label.nii.gz"
     image_prefix: str = ""
     mask_prefix: str = ""
-    val_data_dir: str | None = None
-    val_mask_dir: str | None = None
-    val_image_suffix: str | None = None
-    val_mask_suffix: str | None = None
-    val_image_prefix: str | None = None
-    val_mask_prefix: str | None = None
+
     transform: TransformType = TransformType.PATCH_POS_CENTER
     size: tuple[int, int, int] = (96, 96, 96)
     split_ratio: float = 0.9
@@ -69,14 +72,27 @@ class DatasetConfig:
     sigma_ratio: float = GOOD_SIGMA_RATIO
     pos_center_prob: float = POS_CENTER_PROB
     max_train_samples: int | None = None
-    max_val_samples: int | None = None
+
     cache_train_dataset: bool = False
-    cache_val_dataset: bool = False
+
     cache_pooling: int = 0
     use_preprocessed_dataset: bool = False
     mask_operation: MaskOperations = MaskOperations.STD
     multipatch: bool = False
     max_epochs: int = 1
+
+
+# TODO: general idea: have two dataset configs and pass both to the get_dataset function
+@dataclass
+class ValDatasetConfig:
+    data_dir: str | None = None
+    mask_dir: str | None = None
+    image_suffix: str | None = None
+    mask_suffix: str | None = None
+    image_prefix: str | None = None
+    mask_prefix: str | None = None
+    max_samples: int | None = None
+    cache_dataset: bool = False
 
 
 _cs = ConfigStore.instance()
@@ -86,10 +102,141 @@ _cs.store(
     node=DatasetConfig,
 )
 
+
 ##### Datasets #####
 
 
-class NiftiDataset(Dataset):
+class ABCNiftiDataset(Dataset, ABC):
+    def __init__(
+        self,
+        data_dir: str | Path,
+        mask_dir: str | Path | None = None,
+        image_affix: tuple[str] = ("", ".img.nii.gz"),
+        mask_affix: tuple[str] = ("", ".label.nii.gz"),
+        transform: Callable | None = None,
+        train: bool = True,
+        split_ratio: float = 0.9,
+        max_samples: int | None = None,
+        cache: bool = False,
+        cache_pooling: int = 0,
+        mask_operation: MaskOperations = MaskOperations.STD,
+    ) -> None:
+        self.use_cache = cache
+
+        self.data_dir: Path = Path(data_dir)
+        self.mask_dir: Path = self.data_dir
+        self.mask_operation = mask_operation
+        self.cache_pooling = cache_pooling
+        self.max_samples = max_samples
+        self.split_ratio = split_ratio
+        self.train = train
+
+        if mask_dir is not None:
+            self.mask_dir = Path(mask_dir)
+
+        assert len(image_affix) == len(mask_affix) == 2, "Affix must be a tuple of length 2."
+        self.image_affix = image_affix
+        self.mask_affix = mask_affix
+
+        self.transform: Callable | None = transform
+        # Initialize the loader, very import to ensure channel first!
+        self.loader = LoadImaged(keys=["image", "mask"], ensure_channel_first=True)
+
+    @abstractmethod
+    def get_image_mask_files(self) -> tuple[list[Path], list[Path]]:
+        pass
+
+    def init_cache(self):
+        if self.cache_pooling != 0:
+            image_files, _ = self.get_image_mask_files()
+            result = np.array_split(range(len(image_files)), self.cache_pooling)
+            with Pool(processes=self.cache_pooling) as pool:
+                pooled_samples = pool.map(self.process_samples, [list(part) for part in result])
+            unpacked_samples = list(zip(*pooled_samples, strict=False))
+            self.image_cache = functools.reduce(operator.iadd, unpacked_samples[0], [])
+            self.mask_cache = functools.reduce(operator.iadd, unpacked_samples[1], [])
+
+        else:
+            images, masks = self.process_samples(range(len(image_files)))
+            self.image_cache = images
+            self.mask_cache = masks
+
+    def process_samples(
+        self, indices: int | list[int]
+    ) -> tuple[MetaTensor, MetaTensor] | list[tuple[MetaTensor, MetaTensor]]:
+        """Apply the transformation to the image and mask files."""
+        return_as_list = True
+        if not isinstance(indices, list):
+            return_as_list = False
+            indices = [indices]
+        image_files, mask_files = self.get_image_mask_files()
+        images = []
+        masks = []
+        for idx in indices:
+            data_dict = {
+                "image": image_files[idx],
+                "mask": mask_files[idx],
+            }
+            # Load images and metadata
+            loaded_data = self.loader(data_dict)
+
+            # Apply additional transformations if provided
+            if self.transform:
+                loaded_data = self.transform(loaded_data)
+
+            # Extract the transformed image and mask and append to the output lists
+            images.append(loaded_data["image"])
+            masks.append(perform_mask_transformation(loaded_data["mask"], self.mask_operation))
+
+        return (
+            (images, masks) if return_as_list else (images[0], masks[0]),
+        )  # Alternatively use len(output_list) > 1, but could result in unexpected behavior
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.use_cache:
+            img = self.image_cache[idx]
+            mask = self.mask_cache[idx]
+            return img, mask
+
+        return self.process_samples(idx)
+
+    @staticmethod
+    def load_image_mask_files(
+        image_regex, mask_regex, image_dir, mask_dir
+    ) -> tuple[list[Path], list[Path]]:
+        return (sorted(image_dir.glob(image_regex)), sorted(mask_dir.glob(mask_regex)))
+
+    @staticmethod
+    def check_img_mask_files(
+        image_files,
+        mask_files,
+        data_dir,
+        mask_dir,
+        image_affix,
+        mask_affix,
+    ):
+        if len(image_files) == 0:
+            msg = f"No image files found. {data_dir}"
+            raise ValueError(msg)
+
+        if len(mask_files) == 0:
+            msg = f"No mask files found. (mask_dir: {mask_dir})"
+            raise ValueError(msg)
+
+        # Ensure image and mask files match
+        assert len(image_files) == len(
+            mask_files
+        ), "Number of image files and mask files must match."
+
+        image_prefix, image_suffix = image_affix
+        mask_prefix, mask_suffix = mask_affix
+        for img, mask in zip(image_files, mask_files, strict=False):
+            stripped_img = img.name.replace(image_suffix, "").replace(image_prefix, "")
+            stripped_mask = mask.name.replace(mask_suffix, "").replace(mask_prefix, "")
+            assert stripped_img == stripped_mask, "Image and mask files must match."
+
+
+class NiftiDataset(ABCNiftiDataset):
     """PyTorch Dataset for loading 3D NIfTI images and masks from a directory.
 
     Parameters:
@@ -103,153 +250,87 @@ class NiftiDataset(Dataset):
         self,
         data_dir: str | Path,
         mask_dir: str | Path | None = None,
-        image_suffix: str = ".img.nii.gz",
-        mask_suffix: str = ".label.nii.gz",
-        image_prefix: str = "",
-        mask_prefix: str = "",
-        transform: Callable | None = None,
+        image_affix: tuple[str] = ("", ".img.nii.gz"),
+        mask_affix: tuple[str] = ("", ".label.nii.gz"),
         train: bool = True,
         split_ratio: float = 0.9,
         max_samples: int | None = None,
         cache: bool = False,
         cache_pooling: int = 0,
-        mask_operation: MaskOperations = MaskOperations.STD
+        mask_operation: MaskOperations = MaskOperations.STD,
+        **kwargs,
     ) -> None:
-        self.use_cache = cache
-        self.image_cache = []
-        self.mask_cache = []
-        self.data_dir: Path = Path(data_dir)
-        self.mask_dir: Path = self.data_dir
-        self.mask_operation = mask_operation
-
-        if mask_dir is not None:
-            self.mask_dir = Path(mask_dir)
-
-        self.image_suffix: str = image_suffix
-        self.mask_suffix: str = mask_suffix
-        self.image_prefix: str = image_prefix
-        self.mask_prefix: str = mask_prefix
-
-        self.transform: Callable | None = transform
-        # Initialize the loader, very import to ensure channel first!
-        self.loader = LoadImaged(keys=["image", "mask"], ensure_channel_first=True)
+        self.super().__init__(
+            data_dir=data_dir,
+            mask_dir=mask_dir,
+            image_affix=image_affix,
+            mask_affix=mask_affix,
+            train=train,
+            split_ratio=split_ratio,
+            max_samples=max_samples,
+            cache=cache,
+            cache_pooling=cache_pooling,
+            mask_operation=mask_operation,
+            **kwargs,
+        )
 
         # Collect image and mask file paths
-        image_files: list[Path] = sorted(
-            self.data_dir.glob(f"{self.image_prefix}*{self.image_suffix}")
-        )
-        mask_files: list[Path] = sorted(
-            self.mask_dir.glob(f"{self.mask_prefix}*{self.mask_suffix}")
+        image_files, mask_files = self.load_image_mask_files(
+            f"{image_affix[0]}*{image_affix[1]}",
+            f"{mask_affix[0]}*{mask_affix[1]}",
+            data_dir,
+            mask_dir,
         )
 
-        if len(image_files) == 0:
-            msg = f"No image files found. {self.data_dir}"
-            raise ValueError(msg)
-
-        if len(mask_files) == 0:
-            msg = f"No mask files found. (mask_dir: {self.mask_dir})"
-            raise ValueError(msg)
+        # validate the files and ensure they match
+        self.check_img_mask_files(
+            image_files,
+            mask_files,
+            data_dir,
+            mask_dir,
+            image_affix,
+            mask_affix,
+        )
 
         # Split the dataset into training and validation sets
-        data_files = list(zip(image_files, mask_files, strict=True))
-        # print(data_files) # check if mapping is correct
-        data_files = self.get_sample(data_files, train=train, split_ratio=split_ratio)
-        self.image_files, self.mask_files = zip(*data_files, strict=True)
+        self.image_files, self.mask_files = self.get_sample(
+            image_files, mask_files, train=train, split_ratio=split_ratio
+        )
 
+        # limit files to max_samples
         if max_samples is not None:
             self.image_files = self.image_files[:max_samples]
             self.mask_files = self.mask_files[:max_samples]
 
-        # Ensure image and mask files match
-        assert len(self.image_files) == len(
-            self.mask_files
-        ), "Number of image files and mask files must match."
-        for img, mask in zip(self.image_files, self.mask_files, strict=False):
-            assert img.name.replace(image_suffix, "") == mask.name.replace(
-                mask_suffix, ""
-            ), f"Image file {img} and mask file {mask} do not match."
-
+        # init cache
         if cache:
-            if cache_pooling != 0:
-                result = np.array_split(range(len(self.image_files)), cache_pooling)
-                with Pool(processes=cache_pooling) as pool: 
-                    pooled_samples = pool.map(self.preprocess_samples, [list(part) for part in result])
-                unpacked_samples = list(zip(*pooled_samples))
-                self.image_cache = sum(unpacked_samples[0], [])
-                self.mask_cache = sum(unpacked_samples[1], [])
-
-            else:
-                images, masks = self.preprocess_samples(range(len(self.image_files)))
-                self.image_cache = images
-                self.mask_cache = masks
-
-    def preprocess_samples(
-        self,
-        sample_list: list
-    ):
-        images = []
-        masks = []
-
-        for img_num in sample_list:
-            data_dict = {
-                "image": self.image_files[img_num],
-                "mask": self.mask_files[img_num],
-            }   
-
-            # Load images and metadata
-            loaded_data = self.loader(data_dict)
-
-            # Apply additional transformations if provided
-            if self.transform:
-                loaded_data = self.transform(loaded_data)
-
-            images.append(loaded_data["image"])
-            masks.append(loaded_data["mask"])
-
-        return (images, masks)
-
+            self.init_cache()
 
     @staticmethod
     def get_sample(
-        data_files: list[tuple[Path, Path]],
+        image_files: list[Path],
+        mask_files: list[Path],
         train: bool = True,
         split_ratio: float = 0.9,
-    ):
+    ) -> tuple[list[Path], list[Path]]:
         random.seed(42)
+        data_files = list(zip(image_files, mask_files, strict=True))
         num_train = int(len(data_files) * split_ratio)
         all_indices = list(range(len(data_files)))
         train_indices = random.sample(all_indices, num_train)
         val_indices = list(set(all_indices) - set(train_indices))
-        return [data_files[i] for i in (train_indices if train else val_indices)]
+        filtered_data_files = [data_files[i] for i in (train_indices if train else val_indices)]
+        return zip(*filtered_data_files, strict=True)
+
+    @override
+    def get_image_mask_files(self):
+        return self.image_files, self.mask_files
 
     def __len__(self) -> int:
         return len(self.image_files)
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
-        if self.use_cache:  
-            img = self.image_cache[idx]
-            mask = self.mask_cache[idx]
-            return img, mask
-        else:
-            data_dict = {
-                "image": self.image_files[idx],
-                "mask": self.mask_files[idx],
-            }
 
-            # Load images and metadata
-            loaded_data = self.loader(data_dict)
-
-            # Apply additional transformations if provided
-            if self.transform:
-                loaded_data = self.transform(loaded_data)
-
-            # Extract the transformed image and mask
-            img = loaded_data["image"]
-            mask = perform_mask_transformation(loaded_data["mask"], self.mask_operation)
-
-            return img, mask
-
-class ProprocessedNiftiDataset(Dataset):
+class GroupedNifitDataset(ABCNiftiDataset):
     """PyTorch Dataset for loading preprocessed 3D NIfTI images and masks from a directory.
 
     Parameters:
@@ -263,181 +344,76 @@ class ProprocessedNiftiDataset(Dataset):
         self,
         data_dir: str | Path,
         mask_dir: str | Path | None = None,
-        image_suffix: str = ".img.nii.gz",
-        mask_suffix: str = ".label.nii.gz",
-        image_prefix: str = "",
-        mask_prefix: str = "",
+        image_regex: str = "*.img.nii.gz",
+        mask_regex: str = "*.label.nii.gz",
         max_samples: int | None = None,
         cache: bool = False,
         cache_pooling: int = 0,
-        mask_operation: MaskOperations = MaskOperations.STD,
-        multipatch: bool = False,
-        max_epochs: int = 1,
+        max_epoch: int = 1,
     ) -> None:
-        self.use_cache = cache
-        self.image_cache = []
-        self.mask_cache = []
-        self.data_dir: Path = Path(data_dir)
-        self.mask_dir: Path = self.data_dir
+        self.super().__init__(
+            data_dir=data_dir,
+            mask_dir=mask_dir,
+            image_regex=image_regex,
+            mask_regex=mask_regex,
+            train=True,
+            max_samples=max_samples,
+            cache=cache,
+            cache_pooling=cache_pooling,
+            mask_operation=MaskOperations.STD,
+        )
+
+        self.max_epoch = max_epoch
         self.epoch_counter = 0
-        self.max_epoch = max_epochs
-        self.mask_operation = mask_operation
-
-        if mask_dir is not None:
-            self.mask_dir = Path(mask_dir)
-
-        self.image_suffix: str = image_suffix
-        self.mask_suffix: str = mask_suffix
-        self.image_prefix: str = image_prefix
-        self.mask_prefix: str = mask_prefix
-        self.image_files = []
-        self.mask_files = []
-
-        # Initialize the loader, very import to ensure channel first!
-        self.loader = LoadImaged(keys=["image", "mask"], ensure_channel_first=True)
-
-        if self.max_epoch >= 1:
-            if multipatch: 
-                raise NotImplementedError
 
         for epoch_num in range(self.max_epoch):
-            if multipatch:            
-                image_file_pattern = f"{self.image_prefix}*{self.image_suffix}"
-                mask_file_pattern = f"{self.mask_prefix}*{self.mask_suffix}"
-            else:
-                image_file_pattern = f"{self.image_prefix}*_patch[[]{epoch_num}[]]{self.image_suffix}"
-                mask_file_pattern = f"{self.mask_prefix}*_patch[[]{epoch_num}[]]{self.mask_suffix}"
-
             # Collect image and mask file paths
-            image_files: list[Path] = sorted(
-                self.data_dir.glob(image_file_pattern)
+            image_files, mask_files = self.load_image_mask_files(
+                f"{self.image_prefix}*_patch[[]{epoch_num}[]]{self.image_suffix}",
+                f"{self.mask_prefix}*_patch[[]{epoch_num}[]]{self.mask_suffix}",
+                data_dir,
+                mask_dir,
             )
-            mask_files: list[Path] = sorted(
-                self.mask_dir.glob(mask_file_pattern)
-            )
-
-            if len(image_files) == 0:
-                msg = f"No image files found. {self.data_dir}"
-                raise ValueError(msg)
-
-            if len(mask_files) == 0:
-                msg = f"No mask files found. (mask_dir: {self.mask_dir})"
-                raise ValueError(msg)
-
-            # Split the dataset into training and validation sets
-            data_files = list(zip(image_files, mask_files, strict=True))
-            # print(data_files) # check if mapping is correct
-            data_files = self.get_sample(data_files)
-            zipped_image_files, zipped_mask_files = zip(*data_files, strict=True)
-            self.image_files.append(zipped_image_files)
-            self.mask_files.append(zipped_mask_files)
 
             if max_samples is not None:
-                self.image_files[epoch_num] = self.image_files[epoch_num][:max_samples]
-                self.mask_files[epoch_num] = self.mask_files[epoch_num][:max_samples]
+                image_files = image_files[:max_samples]
+                mask_files = mask_files[:max_samples]
 
-            # Ensure image and mask files match
-            assert len(self.image_files[epoch_num]) == len(
-                self.mask_files[epoch_num]
-            ), "Number of image files and mask files must match."
-            for img, mask in zip(self.image_files[epoch_num], self.mask_files[epoch_num], strict=False):
-                assert img.name.replace(image_suffix, "") == mask.name.replace(
-                    mask_suffix, ""
-                ), f"Image file {img} and mask file {mask} do not match."
+            self.check_img_mask_files(image_files, mask_files)
 
-            #print(f"Epoch {epoch_num} data checked.")
+            self.image_files.append(image_files)
+            self.mask_files.append(mask_files)
+
+        assert (
+            len({len(images) for images in self.image_files}) == 1
+        ), "Number of images must be equal for all epochs."
 
         if cache:
-            if self.max_epoch != 1:
-                #TODO: multiepoch caching
-                raise NotImplementedError
+            self.init_cache(cache_pooling)
 
-            if cache_pooling != 0:
-                result = np.array_split(range(len(self.image_files[0])), cache_pooling)
-                with Pool(processes=cache_pooling) as pool: 
-                    pooled_samples = pool.map(self.preprocess_samples, [list(part) for part in result])
-                unpacked_samples = list(zip(*pooled_samples))
-                self.image_cache[0] = sum(unpacked_samples[0], [])
-                self.mask_cache[0] = sum(unpacked_samples[1], [])
-
-            else:
-                images, masks = self.preprocess_samples(range(len(self.image_files)))
-                self.image_cache[0] = images
-                self.mask_cache[0] = masks
-
-    def preprocess_samples(
-        self,
-        sample_list: list
-    ):
-        images = []
-        masks = []
-
-        for img_num in sample_list:
-            data_dict = {
-                "image": self.image_files[0][img_num],
-                "mask": self.mask_files[0][img_num],
-            }   
-
-            # Load images and metadata
-            loaded_data = self.loader(data_dict)
-            loaded_data = ToTensord(keys=["image", "mask"])(loaded_data)
-
-            images.append(loaded_data["image"])
-            masks.append(loaded_data["mask"])
-
-        return (images, masks)
-
-
-    @staticmethod
-    def get_sample(
-        data_files: list[tuple[Path, Path]]
-    ):
-        random.seed(42)
-        num_train = int(len(data_files))
-        all_indices = list(range(len(data_files)))
-        train_indices = random.sample(all_indices, num_train)
-        return [data_files[i] for i in train_indices]
+    @override
+    def get_image_mask_files(self):
+        return self.image_files[self.epoch_counter % self.max_epoch], self.mask_files[
+            self.epoch_counter % self.max_epoch
+        ]
 
     def __len__(self) -> int:
-        return len(self.image_files[self.epoch_counter % self.max_epoch])
+        return len(self.image_files[0])
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
-        if self.use_cache:  
-            img = self.image_cache[idx]
-            mask = self.mask_cache[idx]
-            return img, mask
-        else:
-            data_dict = {
-                "image": self.image_files[self.epoch_counter % self.max_epoch][idx],
-                "mask": self.mask_files[self.epoch_counter % self.max_epoch][idx],
-            }
-
-            # Load images and metadata
-            loaded_data = self.loader(data_dict)
-
-            loaded_data = ToTensord(keys=["image", "mask"])(loaded_data)
-
-            # Extract the transformed image and mask
-            img = loaded_data["image"]
-            mask = perform_mask_transformation(loaded_data["mask"], self.mask_operation)
-
-            return img, mask
-        
     def next_epoch(self):
         self.epoch_counter += 1
 
         if self.use_cache:
-            #TODO: load cache for next epoch
-            pass
+            self.init_cache()
 
 
-# TODO: we also need to create training data for the 2D model.
-# This requires then additional data augmentation.
-def get_dataset(cfg: DatasetConfig) -> tuple[NiftiDataset, NiftiDataset] | tuple[ProprocessedNiftiDataset, NiftiDataset]:
+# TODO: two configs, one for the training and one for the validation dataset
+def get_dataset(
+    cfg: DatasetConfig,
+) -> tuple[NiftiDataset, NiftiDataset] | tuple[GroupedNifitDataset, NiftiDataset]:
     """Return the training and validation datasets."""
-
     if cfg.use_preprocessed_dataset:
-        train_dataset = ProprocessedNiftiDataset(
+        train_dataset = GroupedNifitDataset(
             data_dir=cfg.data_dir,
             mask_dir=cfg.mask_dir,
             image_prefix=cfg.image_prefix,
@@ -449,11 +425,11 @@ def get_dataset(cfg: DatasetConfig) -> tuple[NiftiDataset, NiftiDataset] | tuple
             cache_pooling=cfg.cache_pooling,
             mask_operation=cfg.mask_operation,
             multipatch=cfg.multipatch,
-            max_epochs=cfg.max_epochs
+            max_epochs=cfg.max_epochs,
         )
     else:
         if cfg.multipatch:
-            print('No preprocessed patched dataset. multipatch will be ignored.')
+            print("No preprocessed patched dataset. multipatch will be ignored.")
 
         train_dataset = NiftiDataset(
             cfg.data_dir,
@@ -498,6 +474,7 @@ def get_dataset(cfg: DatasetConfig) -> tuple[NiftiDataset, NiftiDataset] | tuple
         mask_operation=cfg.mask_operation,
     )
     return train_dataset, val_dataset
+
 
 ##### Transformations #####
 
@@ -837,9 +814,9 @@ def get_transform(
             msg = f"Invalid transform type: {type_}"
             raise ValueError(msg)
 
+
 def perform_mask_transformation(mask, mask_operation: MaskOperations):
     if mask_operation == MaskOperations.BINARY_CLASS:
-        mask[mask!=1] = 0
+        mask[mask != 1] = 0
         return mask
-    else:
-        return mask
+    return mask

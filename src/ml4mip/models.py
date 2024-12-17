@@ -1,13 +1,14 @@
 import logging
+import pathlib
 from dataclasses import dataclass
 from enum import Enum
 
 import torch
 from hydra.core.config_store import ConfigStore
+from monai.networks.nets import UNet
 from omegaconf import MISSING
 
 from ml4mip.segment_anything import sam_model_registry
-from monai.networks.nets import UNet
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,7 @@ class ModelType(Enum):
     UNETR_PTR = "unetr_ptr"
     UNETR = "unetr"
     UNET = "unet"
-    UNETMONAI1 = "unet_moain_1"
+    UNETMONAI1 = "unet_monai_1"
     MEDSAM = "medsam"
 
 
@@ -164,6 +165,55 @@ class UNetWrapper(torch.nn.Module):
 
         # x = self.sig(x)
         return x
+
+
+class MedSamWrapper(torch.nn.Module):
+    def __init__(self, checkpoint_path: str | pathlib.Path):
+        super().__init__()
+        self.model = sam_model_registry["vit_b"](checkpoint=checkpoint_path)
+        self.model.load_state_dict(torch.load(checkpoint_path, weights_only=False))
+
+    # TODO:
+    def forward(self, images: torch.Tensor, masks) -> torch.Tensor:
+        # Reshaping images: treat each z-slice image independantly
+        images = images.permute(0, 4, 1, 2, 3)
+        sh = images.shape
+        images = images.reshape(sh[0] * sh[1], sh[2], sh[3], sh[4])
+        # Same for masks
+        masks = masks.permute(0, 4, 1, 2, 3)
+        sh = masks.shape
+        masks = masks.reshape(sh[0] * sh[1], sh[2], sh[3], sh[4])
+        # Create "image", "boxes", "point_coords", "mask_inputs" and
+        # "original_size" attributes to 'x'
+        images = [
+            {
+                "image": img,
+                "boxes": torch.tensor([[[0, 0, 95, 95]]], device="cuda"),
+                # "point_coords": None,
+                "mask_inputs": mask[None],
+                "original_size": (96, 96),
+            }
+            for img, mask in zip(images, masks, strict=False)
+        ]
+        # del masks ?
+        outputs = []
+        bs = 2
+        for i in range(len(images) // bs):
+            single_batch_output = self.model(images[i : i + bs])
+            outputs += [single_output["masks"][0] for single_output in single_batch_output]
+        outputs = torch.stack(outputs)
+        # Add the batch_size dimension
+        outputs_sh = outputs.shape
+        outputs = outputs.reshape(
+            outputs_sh[0] // 96, 96, outputs_sh[1], outputs_sh[2], outputs_sh[3]
+        )
+        masks_sh = masks.shape
+        masks = masks.reshape(masks_sh[0] // 96, 96, masks_sh[1], masks_sh[2], masks_sh[3])
+        # Permute the z index to the end
+        outputs = outputs.permute(0, 2, 3, 4, 1).to(dtype=torch.float)
+        masks = masks.permute(0, 2, 3, 4, 1)
+
+        return outputs
 
 
 def get_model(cfg: ModelConfig) -> torch.nn.Module:

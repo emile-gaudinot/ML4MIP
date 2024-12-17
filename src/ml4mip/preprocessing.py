@@ -1,17 +1,18 @@
 import logging
 from dataclasses import dataclass, field
+from multiprocessing import Pool
 from pathlib import Path
 
 import hydra
+import numpy as np
 from hydra.core.config_store import ConfigStore
 from monai.transforms import Compose, SaveImaged
 from omegaconf import OmegaConf
-from multiprocessing import Pool
-import numpy as np
 
 from ml4mip.dataset import DatasetConfig, NiftiDataset, get_transform
 
 logger = logging.getLogger(__name__)
+
 
 def create_patches(
     image,
@@ -23,7 +24,8 @@ def create_patches(
     # 1) get name
     image_filename = image.meta.get("filename_or_obj", None)
     if image_filename is None:
-        raise ValueError("Image does not have a filename")
+        msg = "Image does not have a filename"
+        raise ValueError(msg)
     # 2) create directory with output_dir
     output_dir = Path(output_dir)
     output_dir.mkdir(exist_ok=True, parents=True)
@@ -53,13 +55,14 @@ def create_patches(
         image_saver(patch)
         mask_saver(patch)
 
+
 def process_subset(index_subset: list[int], base_dataset, post_transforms, n_patches, output_dir):
-    print(index_subset)
+    msg = f"Processing subset: {index_subset}"
+    logger.info(msg)
     for i in range(len(index_subset)):
         local_img, local_msk = base_dataset[index_subset[i]]
         create_patches(local_img, local_msk, post_transforms, n_patches, output_dir)
-    
-    return None
+
 
 @dataclass
 class PreprocessingConfig:
@@ -114,6 +117,11 @@ def main(cfg: PreprocessingConfig):
 
     # run process_subset in computation pool
     subsets = np.array_split(range(len(base_dataset)), cfg.computation_pool_size)
-    with Pool(processes=cfg.computation_pool_size) as pool: 
-        pool.starmap(process_subset, [(list(part), base_dataset, post_transforms, cfg.n_patches, cfg.output_dir) for part in subsets])
-
+    with Pool(processes=cfg.computation_pool_size) as pool:
+        pool.starmap(
+            process_subset,
+            [
+                (list(part), base_dataset, post_transforms, cfg.n_patches, cfg.output_dir)
+                for part in subsets
+            ],
+        )

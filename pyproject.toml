@@ -188,5 +188,6 @@ forced-separate = ["ml4mip", "tests"]
 formats = "ipynb,py:percent"
 
 [project.scripts]
-ml4mip = "ml4mip.__main__:main"
+train = "ml4mip.workflows:run_training"
+validate = "ml4mip.workflows:run_validation"
 preprocessing = "ml4mip.preprocessing:main"
