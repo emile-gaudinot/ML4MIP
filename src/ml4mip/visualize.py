@@ -446,7 +446,7 @@ def plot_comparison(
 
 # TODO: does currently only work with binary volumes
 # Update so the skeleton and graph can be displayed too.
-def plot_3d_volume(binary_volume, voxel_limit=100_000):
+def plot_3d_volume(binary_volume, voxel_limit=100_000_000):
     if binary_volume is not None and binary_volume.ndim != 3:
         msg = f"Input binary volume must be 3D, but got shape: {binary_volume.shape}"
         raise ValueError(msg)
