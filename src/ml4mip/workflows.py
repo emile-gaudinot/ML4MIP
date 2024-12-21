@@ -6,24 +6,22 @@ from pathlib import Path
 import hydra
 import mlflow
 import mlflow.pytorch
-import OmegaConf
 import torch
 from hydra.core.config_store import ConfigStore
-from monai.losses import DiceLoss
-from omegaconf import MISSING
+from omegaconf import MISSING, OmegaConf
 from torch import optim
 from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
 
 from ml4mip import trainer
-from ml4mip.dataset import DatasetConfig, TransformType, get_dataset
+from ml4mip.dataset import DataLoaderConfig, get_dataset
 from ml4mip.graph_extraction import extract_graph
+from ml4mip.loss import LossConfig, get_loss
 from ml4mip.models import ModelConfig, get_model
 from ml4mip.utils.logging import log_hydra_config_to_mlflow, log_metrics
 from ml4mip.utils.metrics import get_metrics
 from ml4mip.utils.torch import load_checkpoint, save_model
 from ml4mip.visualize import visualize_model
-from ml4mip.loss import get_loss, LossConfig
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +35,11 @@ class Config:
     lr: float = 1e-4
     num_epochs: int = 10
     model: ModelConfig = MISSING
-    dataset: DatasetConfig = field(default_factory=DatasetConfig)
+    dataset: DataLoaderConfig = field(default_factory=DataLoaderConfig)
     visualize_model: bool = False
     visualize_model_val_batches: int = 1
     visualize_model_train_batches: int = 4
-    # TODO: Use more efficient 3d plotting, implement automatic downscaling
-    plot_3d: bool = False  # currently 3d plotting is not efficient enough.
+    plot_3d: bool = False
     extract_graph: bool = False
     epoch_profiling_torch: bool = False
     epoch_profiling_cpy: bool = False
@@ -56,8 +53,11 @@ _cs.store(
     node=Config,
 )
 
-
-@hydra.main(version_base=None, config_path="conf", config_name="config")
+@hydra.main(
+    version_base=None,
+    config_path="conf",
+    config_name="config",
+)
 def run_training(cfg: Config) -> None:
     """Prepare data, model, and training loop for fine-tuning."""
     logger.info(OmegaConf.to_yaml(cfg))
@@ -67,25 +67,26 @@ def run_training(cfg: Config) -> None:
 
     logger.info("Starting model training script")
 
-    if cfg.inference.mode == trainer.InferenceMode.SLIDING_WINDOW and cfg.dataset.transform not in (
-        TransformType.PATCH_POS_CENTER,
-        TransformType.PATCH_CENTER_GAUSSIAN,
-    ):
-        msg = (
-            "Sliding window validation is only supported for patch-based datasets. "
-            "Please set the dataset.transform to 'PATCH' in the configuration file."
-        )
-        raise ValueError(msg)
+    # TODO: checks don't make sense with preprocessed datasets, update:
+    # if cfg.inference.mode == trainer.InferenceMode.SLIDING_WINDOW and cfg.dataset.train.transform not in (
+    #     TransformType.PATCH_POS_CENTER,
+    #     TransformType.PATCH_CENTER_GAUSSIAN,
+    # ):
+    #     msg = (
+    #         "Sliding window validation is only supported for patch-based datasets. "
+    #         "Please set the dataset.transform to 'PATCH' in the configuration file."
+    #     )
+    #     raise ValueError(msg)
 
-    if (
-        cfg.inference.mode == trainer.InferenceMode.RESCALE
-        and cfg.dataset.transform != TransformType.RESIZE
-    ):
-        msg = (
-            "Rescale validation is only supported for resize-based datasets. "
-            "Please set the dataset.transform to 'RESIZE' in the configuration file."
-        )
-        raise ValueError(msg)
+    # if (
+    #     cfg.inference.mode == trainer.InferenceMode.RESCALE
+    #     and cfg.dataset.transform != TransformType.RESIZE
+    # ):
+    #     msg = (
+    #         "Rescale validation is only supported for resize-based datasets. "
+    #         "Please set the dataset.transform to 'RESIZE' in the configuration file."
+    #     )
+    #     raise ValueError(msg)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_ds, val_ds = get_dataset(cfg.dataset)

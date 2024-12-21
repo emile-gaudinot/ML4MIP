@@ -20,15 +20,30 @@ def create_patches(
     transform,
     n_patches,
     output_dir,
+    image_affix,
+    mask_affix,
 ):
-    # 1) get name
-    image_filename = image.meta.get("filename_or_obj", None)
-    if image_filename is None:
+    # 1) get name and remove affixes for clean output names
+    if image.meta.get("filename_or_obj", None) is None:
         msg = "Image does not have a filename"
         raise ValueError(msg)
+    image_prefix, image_suffix = image_affix
+    image.meta["filename_or_obj"] = (
+        Path(image.meta["filename_or_obj"]).name.replace(image_prefix, "").replace(image_suffix, "")
+    )
+
+    if mask.meta.get("filename_or_obj", None) is None:
+        msg = "Mask does not have a filename"
+        raise ValueError(msg)
+    mask_prefix, mask_suffix = mask_affix
+    mask.meta["filename_or_obj"] = (
+        Path(mask.meta["filename_or_obj"]).name.replace(mask_prefix, "").replace(mask_suffix, "")
+    )
+
     # 2) create directory with output_dir
     output_dir = Path(output_dir)
     output_dir.mkdir(exist_ok=True, parents=True)
+    
     # 3) repeat n_patches times:
     for i in range(n_patches):
         image_saver = SaveImaged(
@@ -56,12 +71,27 @@ def create_patches(
         mask_saver(patch)
 
 
-def process_subset(index_subset: list[int], base_dataset, post_transforms, n_patches, output_dir):
-    msg = f"Processing subset: {index_subset}"
-    logger.info(msg)
+def process_subset(
+    index_subset: list[int],
+    base_dataset,
+    post_transforms,
+    n_patches,
+    output_dir,
+    image_affix,
+    mask_affix,
+):
+    logger.info("Processing subset: %s", index_subset)
     for i in range(len(index_subset)):
         local_img, local_msk = base_dataset[index_subset[i]]
-        create_patches(local_img, local_msk, post_transforms, n_patches, output_dir)
+        create_patches(
+            local_img,
+            local_msk,
+            post_transforms,
+            n_patches,
+            output_dir,
+            image_affix,
+            mask_affix,
+        )
 
 
 @dataclass
@@ -103,15 +133,13 @@ def main(cfg: PreprocessingConfig):
     base_dataset = NiftiDataset(
         data_dir=cfg.dataset.data_dir,
         mask_dir=cfg.dataset.mask_dir,
-        image_prefix=cfg.dataset.image_prefix,
-        mask_prefix=cfg.dataset.mask_prefix,
-        image_suffix=cfg.dataset.image_suffix,
-        mask_suffix=cfg.dataset.mask_suffix,
+        image_affix=cfg.dataset.image_affix,
+        mask_affix=cfg.dataset.mask_affix,
         transform=base_transforms,
         train=True,
         split_ratio=cfg.dataset.split_ratio,
-        max_samples=cfg.dataset.max_train_samples,
-        cache=cfg.dataset.cache_train_dataset,
+        max_samples=cfg.dataset.max_samples,
+        cache=cfg.dataset.cache,
         cache_pooling=cfg.dataset.cache_pooling,
     )
 
@@ -121,7 +149,15 @@ def main(cfg: PreprocessingConfig):
         pool.starmap(
             process_subset,
             [
-                (list(part), base_dataset, post_transforms, cfg.n_patches, cfg.output_dir)
+                (
+                    list(part),
+                    base_dataset,
+                    post_transforms,
+                    cfg.n_patches,
+                    cfg.output_dir,
+                    cfg.dataset.image_affix,
+                    cfg.dataset.mask_affix,
+                )
                 for part in subsets
             ],
         )

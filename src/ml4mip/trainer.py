@@ -15,7 +15,7 @@ from torch.profiler import ProfilerActivity, profile, record_function
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from ml4mip.dataset import ProprocessedNiftiDataset
+from ml4mip.dataset import GroupedNifitDataset
 from ml4mip.utils.logging import log_metrics
 from ml4mip.utils.metrics import MetricsManager
 from ml4mip.utils.torch import save_checkpoint
@@ -267,9 +267,7 @@ def train(
     """
     global_batch_idx = 0
     for epoch in range(current_epoch, num_epochs):
-        msg = f"Epoch {epoch + 1}/{num_epochs}: training..."
-        logger.info(msg)
-        logger.info(f"Epoch learning rate: {optimizer.param_groups[0]['lr']}")
+        logger.info("Epoch %d/%d: training...", epoch + 1, num_epochs)
 
         train_metrics = profile_epoch(
             train_one_epoch,
@@ -280,12 +278,11 @@ def train(
             loss_fn=loss_fn,
             device=device,
             batch_idx=global_batch_idx,
-            epoch=epoch,
             torch_profiling=torch_profiling,
             cpython_profiling=cpython_profiling,
         )
 
-        if isinstance(train_loader.dataset, ProprocessedNiftiDataset):
+        if isinstance(train_loader.dataset, GroupedNifitDataset):
             train_loader.dataset.next_epoch()
 
         global_batch_idx += len(train_loader)
@@ -298,7 +295,7 @@ def train(
         )
         log_metrics(
             "train",
-            train_metrics,
+            {"lr": optimizer.param_groups[0]["lr"]} | train_metrics,
             step=epoch,
             epochs=(
                 epoch,
