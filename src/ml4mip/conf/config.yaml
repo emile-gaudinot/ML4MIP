@@ -11,3 +11,5 @@ num_epochs: 20
 ml_flow_uri: "file://${hydra:runtime.cwd}/runs"
 model_dir: ${hydra:runtime.cwd}/models
 model_tag: "unet.pt"
+visualize_model: true
+plot_3d: true
