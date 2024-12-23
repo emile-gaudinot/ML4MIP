@@ -1,0 +1,17 @@
+defaults:
+  - base_dataloader
+
+train:
+  data_dir: '/group/cake/preprocessed_data/uniform128'
+  mask_dir: '/group/cake/preprocessed_data/uniform128'
+  image_affix: ["", ".img.nii.gz"]
+  mask_affix: ["", ".label.nii.gz"]
+  split_ratio: 0.9
+  grouped: true
+
+val:
+  data_dir: "/group/cake/preprocessed_data/uniform128_val"
+  mask_dir: "/group/cake/preprocessed_data/uniform128_val"
+  image_affix: ["", ".img.nii.gz"]
+  mask_affix: ["", ".label.nii.gz"]
+  split_ratio: 0.9
