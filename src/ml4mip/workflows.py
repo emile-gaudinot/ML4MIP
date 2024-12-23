@@ -141,7 +141,7 @@ def run_training(cfg: Config) -> None:
 
     # TODO: parameterize loss function and metric
     # TODO: use smooth dice loss to for empty masks
-    loss_fn = DiceCELoss(sigmoid=True, include_background=False, lambda_ce=.66)
+    loss_fn = DiceCELoss(sigmoid=True, include_background=False, lambda_ce=.1, batch=True)
     metrics = get_metrics()
 
     # Initialize MLflow

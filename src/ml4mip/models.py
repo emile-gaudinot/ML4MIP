@@ -17,6 +17,7 @@ class ModelType(Enum):
     UNETR = "unetr"
     UNET = "unet"
     UNETMONAI1 = "unet_moain_1"
+    UNETMONAI2 = "unet_moain_2"
     MEDSAM = "medsam"
 
 
@@ -181,6 +182,15 @@ def get_model(cfg: ModelConfig) -> torch.nn.Module:
                 out_channels=1,
                 channels=(16, 32, 64, 128, 256),
                 strides=(2, 2, 2, 2),
+                num_res_units=2,
+            )
+        case ModelType.UNETMONAI2:
+            model = UNet(
+                spatial_dims=3,
+                in_channels=1,
+                out_channels=1,
+                channels=(32, 64, 128, 256, 320, 320),
+                strides=(2, 2, 2, 2, 2),
                 num_res_units=2,
             )
         case ModelType.MEDSAM:
