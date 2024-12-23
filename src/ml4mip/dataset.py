@@ -26,6 +26,7 @@ from monai.transforms import (
     ScaleIntensityd,
     Spacingd,
     ToTensord,
+    RandSpatialCropd,
 )
 from scipy.stats import truncnorm
 from torch.utils.data import Dataset
@@ -37,6 +38,7 @@ class TransformType(Enum):
     RESIZE = "resize"
     PATCH_CENTER_GAUSSIAN = "patch_center_gaussian"
     PATCH_POS_CENTER = "patch_pos"
+    PATCH_UNIFORM = "patch_uniform"
     STD = "std"
 
 
@@ -765,6 +767,25 @@ def get_patch_positive_center_transform(
         + transforms[-1:]
     )
 
+def get_patch_uniform_transform(
+    size: Sequence[int] = (96, 96, 96),
+    target_pixel_dim: tuple[float, float, float] = TARGET_PIXEL_DIM,
+    target_spatial_size: tuple[int, int, int] = TARGET_SPATIAL_SIZE,
+):
+    # Make a copy of the pipeline transforms
+    transforms = get_default_transforms(target_pixel_dim, target_spatial_size)
+    return Compose(
+        transforms[:-1]
+        + [
+            RandSpatialCropd(
+                keys=["image", "mask"],
+                roi_size=size,
+                random_size=False,
+                random_center=True,
+            )
+        ]
+        + transforms[-1:]
+    )
 
 def get_std_transform(
     target_pixel_dim: tuple[float, float, float] = TARGET_PIXEL_DIM,
@@ -800,6 +821,12 @@ def get_transform(
                 target_pixel_dim,
                 target_spatial_size,
                 pos_center_prob,
+            )
+        case TransformType.PATCH_UNIFORM:
+            return get_patch_uniform_transform(
+                size, 
+                target_pixel_dim, 
+                target_spatial_size
             )
         case TransformType.STD:
             return get_std_transform(target_pixel_dim, target_spatial_size)
