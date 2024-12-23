@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from multiprocessing import Pool
 from pathlib import Path
-from typing import override
+# from typing import override
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -335,7 +335,7 @@ class NiftiDataset(ABCNiftiDataset):
         filtered_data_files = [data_files[i] for i in (train_indices if train else val_indices)]
         return zip(*filtered_data_files, strict=True)
 
-    @override
+    # @override
     def get_image_mask_files(self):
         return self.image_files, self.mask_files
 
@@ -410,7 +410,7 @@ class GroupedNifitDataset(ABCNiftiDataset):
         if cache:
             self.init_cache()
 
-    @override
+    # @override
     def get_image_mask_files(self):
         return (
             self.image_files[self.epoch_counter % self.max_epoch],
