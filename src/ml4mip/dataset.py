@@ -40,6 +40,7 @@ class TransformType(Enum):
     PATCH_POS_CENTER = "patch_pos"
     PATCH_UNIFORM = "patch_uniform"
     STD = "std"
+    TOTENSOR = "totensor"
 
 
 class MaskOperations(Enum):
@@ -832,6 +833,8 @@ def get_transform(
             )
         case TransformType.STD:
             return get_std_transform(target_pixel_dim, target_spatial_size)
+        case TransformType.TOTENSOR:
+            return ToTensord(keys=["image", "mask"])
         case _:
             msg = f"Invalid transform type: {type_}"
             raise ValueError(msg)
