@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from multiprocessing import Pool
 from pathlib import Path
-# from typing import override
 
+# from typing import override
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -21,12 +21,12 @@ from monai.transforms import (
     LoadImaged,
     MapTransform,
     Randomizable,
+    RandSpatialCropd,
     Resized,
     ResizeWithPadOrCropd,
     ScaleIntensityd,
     Spacingd,
     ToTensord,
-    RandSpatialCropd,
 )
 from scipy.stats import truncnorm
 from torch.utils.data import Dataset
@@ -767,6 +767,7 @@ def get_patch_positive_center_transform(
         + transforms[-1:]
     )
 
+
 def get_patch_uniform_transform(
     size: Sequence[int] = (96, 96, 96),
     target_pixel_dim: tuple[float, float, float] = TARGET_PIXEL_DIM,
@@ -786,6 +787,7 @@ def get_patch_uniform_transform(
         ]
         + transforms[-1:]
     )
+
 
 def get_std_transform(
     target_pixel_dim: tuple[float, float, float] = TARGET_PIXEL_DIM,
@@ -824,9 +826,9 @@ def get_transform(
             )
         case TransformType.PATCH_UNIFORM:
             return get_patch_uniform_transform(
-                size, 
-                target_pixel_dim, 
-                target_spatial_size
+                size,
+                target_pixel_dim,
+                target_spatial_size,
             )
         case TransformType.STD:
             return get_std_transform(target_pixel_dim, target_spatial_size)
