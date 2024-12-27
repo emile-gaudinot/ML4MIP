@@ -5,11 +5,11 @@ defaults:
 
 # Base training configuration
 
-batch_size: 4
-lr: 1e-3
-num_epochs: 20
+batch_size: 16
+lr: 1e-2
+num_epochs: 100
 ml_flow_uri: "file://${hydra:runtime.cwd}/runs"
 model_dir: ${hydra:runtime.cwd}/models
 model_tag: "unet.pt"
-mode: TRAIN
-val_sw_batch_size: 2
+visualize_model: true
+plot_3d: true

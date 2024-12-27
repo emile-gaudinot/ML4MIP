@@ -1,3 +1,8 @@
 defaults:
   - base_preprocessing_config
-  - dataset: default        # Default dataset configuration
+  - dataset: default_preprocessing        # Default dataset configuration
+  
+
+output_dir: ${hydra:runtime.cwd}/data/preprocessed_group
+computation_pool_size: 4
+n_patches: 40

@@ -1,34 +1,29 @@
 import logging
 import sys
 from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 
+import hydra
 import mlflow
 import mlflow.pytorch
 import torch
 from hydra.core.config_store import ConfigStore
-from monai.losses import DiceLoss, DiceCELoss
-from omegaconf import MISSING
+from omegaconf import MISSING, OmegaConf
 from torch import optim
+from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
 
 from ml4mip import trainer
-from ml4mip.dataset import DatasetConfig, TransformType, get_dataset
+from ml4mip.dataset import DataLoaderConfig, get_dataset
 from ml4mip.graph_extraction import extract_graph
+from ml4mip.loss import LossConfig, get_loss
 from ml4mip.models import ModelConfig, get_model
 from ml4mip.utils.logging import log_hydra_config_to_mlflow, log_metrics
 from ml4mip.utils.metrics import get_metrics
 from ml4mip.utils.torch import load_checkpoint, save_model
 from ml4mip.visualize import visualize_model
-import torch.optim.lr_scheduler as lr_scheduler
 
 logger = logging.getLogger(__name__)
-
-
-class Mode(Enum):
-    TRAIN = "train"
-    EVAL = "eval"
 
 
 @dataclass
@@ -36,28 +31,20 @@ class Config:
     ml_flow_uri: str = str(Path.cwd() / "runs")
     model_dir: str = MISSING
     model_tag: str = MISSING
-    mode: Mode = Mode.TRAIN
     batch_size: int = 1
     lr: float = 1e-4
     num_epochs: int = 10
     model: ModelConfig = MISSING
-    dataset: DatasetConfig = field(default_factory=DatasetConfig)
+    dataset: DataLoaderConfig = field(default_factory=DataLoaderConfig)
     visualize_model: bool = False
     visualize_model_val_batches: int = 1
     visualize_model_train_batches: int = 4
-    # TODO: Use more efficient 3d plotting, implement automatic downscaling
-    plot_3d: bool = False  # currently 3d plotting is not efficient enough.
+    plot_3d: bool = False
     extract_graph: bool = False
-    val_inference_mode: trainer.InferenceMode = trainer.InferenceMode.SLIDING_WINDOW
-    val_sw_size: int = 96
-    val_sw_batch_size: int = 4
-    val_sw_overlap: float = 0.25
-    val_model_input_size: tuple[int, int, int] = (96, 96, 96)
-    pretrained_model_path: str | None = None 
     epoch_profiling_torch: bool = False
     epoch_profiling_cpy: bool = False
     inference: trainer.InferenceConfig = field(default_factory=trainer.InferenceConfig)
-    pretrained_model_path: str | None = None
+    loss: LossConfig = field(default_factory=LossConfig)
 
 
 _cs = ConfigStore.instance()
@@ -66,30 +53,40 @@ _cs.store(
     node=Config,
 )
 
-
+@hydra.main(
+    version_base=None,
+    config_path="conf",
+    config_name="config",
+)
 def run_training(cfg: Config) -> None:
     """Prepare data, model, and training loop for fine-tuning."""
+    logger.info(OmegaConf.to_yaml(cfg))
+    cfg = OmegaConf.to_object(
+        cfg
+    )  # this is important, so the values are treated as in the workflow.Config object
+
     logger.info("Starting model training script")
 
-    if cfg.inference.mode == trainer.InferenceMode.SLIDING_WINDOW and cfg.dataset.transform not in (
-        TransformType.PATCH_POS_CENTER,
-        TransformType.PATCH_CENTER_GAUSSIAN,
-    ):
-        msg = (
-            "Sliding window validation is only supported for patch-based datasets. "
-            "Please set the dataset.transform to 'PATCH' in the configuration file."
-        )
-        raise ValueError(msg)
+    # TODO: checks don't make sense with preprocessed datasets, update:
+    # if cfg.inference.mode == trainer.InferenceMode.SLIDING_WINDOW and cfg.dataset.train.transform not in (
+    #     TransformType.PATCH_POS_CENTER,
+    #     TransformType.PATCH_CENTER_GAUSSIAN,
+    # ):
+    #     msg = (
+    #         "Sliding window validation is only supported for patch-based datasets. "
+    #         "Please set the dataset.transform to 'PATCH' in the configuration file."
+    #     )
+    #     raise ValueError(msg)
 
-    if (
-        cfg.inference.mode == trainer.InferenceMode.RESCALE
-        and cfg.dataset.transform != TransformType.RESIZE
-    ):
-        msg = (
-            "Rescale validation is only supported for resize-based datasets. "
-            "Please set the dataset.transform to 'RESIZE' in the configuration file."
-        )
-        raise ValueError(msg)
+    # if (
+    #     cfg.inference.mode == trainer.InferenceMode.RESCALE
+    #     and cfg.dataset.transform != TransformType.RESIZE
+    # ):
+    #     msg = (
+    #         "Rescale validation is only supported for resize-based datasets. "
+    #         "Please set the dataset.transform to 'RESIZE' in the configuration file."
+    #     )
+    #     raise ValueError(msg)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_ds, val_ds = get_dataset(cfg.dataset)
@@ -105,15 +102,13 @@ def run_training(cfg: Config) -> None:
 
     # Model and optimizer
     model = get_model(cfg.model)
-    if cfg.pretrained_model_path:
-        state_dict = torch.load(cfg.pretrained_model_path)
-        model.load_state_dict(state_dict)
-        logger.info(f"Loaded pretrained model from {cfg.pretrained_model_path}")
     model = model.to(device)
 
     # TODO: learning rate scheduler
     optimizer = optim.AdamW(model.parameters(), lr=cfg.lr)
-    scheduler = lr_scheduler.LinearLR(optimizer, start_factor=1, end_factor=0.01, total_iters=cfg.num_epochs)
+    scheduler = lr_scheduler.LinearLR(
+        optimizer, start_factor=1, end_factor=0.01, total_iters=cfg.num_epochs
+    )
 
     checkpoint_dir = (Path(cfg.model_dir) / f"{cfg.model_tag}").with_suffix("")
     current_epoch = 0
@@ -139,9 +134,7 @@ def run_training(cfg: Config) -> None:
         msg = f"Starting training from scratch with {current_epoch} epochs (no checkpoint found)"
         logger.info(msg)
 
-    # TODO: parameterize loss function and metric
-    # TODO: use smooth dice loss to for empty masks
-    loss_fn = DiceCELoss(sigmoid=True, include_background=False, lambda_ce=.66)
+    loss_fn = get_loss(cfg.loss)
     metrics = get_metrics()
 
     # Initialize MLflow
@@ -166,14 +159,6 @@ def run_training(cfg: Config) -> None:
                 inference_cfg=cfg.inference,
                 checkpoint_dir=checkpoint_dir,
                 scheduler=scheduler,
-                model_type="medsam"
-                if cfg.model.model_type.value == "medsam"
-                else None,  # TODO: remove once the training logic for medsam is within the class wrapper
-                val_inference_mode=cfg.val_inference_mode,
-                val_sw_size=cfg.val_sw_size,
-                val_sw_batch_size=cfg.val_sw_batch_size,
-                val_sw_overlap=cfg.val_sw_overlap,
-                val_model_input_size=cfg.val_model_input_size,
                 torch_profiling=cfg.epoch_profiling_torch,
                 cpython_profiling=cfg.epoch_profiling_cpy,
             )
@@ -206,8 +191,13 @@ def run_training(cfg: Config) -> None:
         )
 
 
-def run_evaluation(cfg: Config):
-    logger.info("Starting evaluation script")
+@hydra.main(version_base=None, config_path="conf", config_name="config")
+def run_validation(cfg: Config):
+    logger.info(OmegaConf.to_yaml(cfg))
+    cfg = OmegaConf.to_object(
+        cfg
+    )  # this is important, so the values are treated as in the workflow.Config object
+    logger.info("Starting validation script")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     _, val_ds = get_dataset(cfg.dataset)
@@ -215,16 +205,14 @@ def run_evaluation(cfg: Config):
         val_ds, batch_size=cfg.batch_size, shuffle=False, pin_memory=torch.cuda.is_available()
     )
 
-    msg = f"Evaluation on {len(val_ds)} samples"
+    msg = f"Validation on {len(val_ds)} samples"
     logger.info(msg)
 
     # Model
     model = get_model(cfg.model)
     model = model.to(device)
 
-    # TODO: parameterize loss function and metric
-    # TODO: use smooth dice loss to for empty masks
-    loss_fn = DiceLoss(sigmoid=True)
+    loss_fn = get_loss(cfg.loss)
     metrics = get_metrics()
 
     # Initialize MLflow

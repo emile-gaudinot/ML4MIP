@@ -1,4 +1,12 @@
 defaults:
-  - base_dataset
-  
-mask_dir: /data/training_data
+  - base_dataloader
+
+train:
+    data_dir: ${hydra:runtime.cwd}/data/rand_patch_96
+    mask_dir: ${hydra:runtime.cwd}/data/rand_patch_96
+    grouped: true
+    max_epochs: 40
+    
+val:
+    transform: STD
+    max_samples: 2

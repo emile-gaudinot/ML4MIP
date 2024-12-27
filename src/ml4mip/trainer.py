@@ -1,28 +1,29 @@
+import cProfile
+import gc
 import logging
+import pstats
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-import gc
 
 import torch
 import torch.nn.functional as F
 from hydra.core.config_store import ConfigStore
 from monai.inferers import sliding_window_inference
 from torch import nn, optim
+from torch.profiler import ProfilerActivity, profile, record_function
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-import cProfile
-import pstats
 
-from ml4mip.dataset import ProprocessedNiftiDataset
+from ml4mip.dataset import GroupedNifitDataset
 from ml4mip.utils.logging import log_metrics
 from ml4mip.utils.metrics import MetricsManager
-from torch.profiler import profile, record_function, ProfilerActivity
 from ml4mip.utils.torch import save_checkpoint
 
 logger = logging.getLogger(__name__)
 
 activities = [ProfilerActivity.CPU, ProfilerActivity.CUDA, ProfilerActivity.XPU]
+
 
 # --- TRAINING FUNCTION ---
 def train_one_epoch(
@@ -33,7 +34,6 @@ def train_one_epoch(
     metrics: MetricsManager,
     device: torch.device,
     batch_idx: int,
-    model_type: str | None = None,
 ) -> float:
     """Train the model for one epoch.
 
@@ -59,56 +59,12 @@ def train_one_epoch(
         images, masks = batch
         images, masks = images.to(device), masks.to(device)
         optimizer.zero_grad()
-
-        # TODO: Create Model Wrapper for MedSam and move the following logic there
-        # Forward pass
-        if model_type == "medsam":
-            # Reshaping images: treat each z-slice image independantly
-            images = images.permute(0, 4, 1, 2, 3)
-            sh = images.shape
-            images = images.reshape(sh[0] * sh[1], sh[2], sh[3], sh[4])
-            # Same for masks
-            masks = masks.permute(0, 4, 1, 2, 3)
-            sh = masks.shape
-            masks = masks.reshape(sh[0] * sh[1], sh[2], sh[3], sh[4])
-            # Create "image", "boxes", "point_coords", "mask_inputs" and
-            # "original_size" attributes to 'x'
-            images = [
-                {
-                    "image": img,
-                    "boxes": torch.tensor([[[0, 0, 95, 95]]], device="cuda"),
-                    # "point_coords": None,
-                    "mask_inputs": mask[None],
-                    "original_size": (96, 96),
-                }
-                for img, mask in zip(images, masks, strict=False)
-            ]
-            # del masks ?
-            outputs = []
-            bs = 2
-            for i in range(len(images) // bs):
-                single_batch_output = model(images[i : i + bs])
-                outputs += [single_output["masks"][0] for single_output in single_batch_output]
-            outputs = torch.stack(outputs)
-            # Add the batch_size dimension
-            outputs_sh = outputs.shape
-            outputs = outputs.reshape(
-                outputs_sh[0] // 96, 96, outputs_sh[1], outputs_sh[2], outputs_sh[3]
-            )
-            masks_sh = masks.shape
-            masks = masks.reshape(masks_sh[0] // 96, 96, masks_sh[1], masks_sh[2], masks_sh[3])
-            # Permute the z index to the end
-            outputs = outputs.permute(0, 2, 3, 4, 1).to(dtype=torch.float)
-            masks = masks.permute(0, 2, 3, 4, 1)
-
-        else:
-            outputs = model(images)
+        outputs = model(images)
 
         if outputs.shape != masks.shape:
             msg = f"Output shape: {outputs.shape} | Mask shape: {masks.shape}"
             logger.warning(msg)
 
-        #print(torch.histogram(masks.cpu(), bins=10, density=True)) # visualize mask value distibution
         loss = loss_fn(outputs, masks)
         metrics(y_pred=outputs, y=masks)
         batch_metric(y_pred=outputs, y=masks)
@@ -256,6 +212,26 @@ def validate(
     }
 
 
+def profile_epoch(train_fn, *args, torch_profiling=False, cpython_profiling=False, **kwargs):
+    """Profiles a training epoch using either torch profiler or cProfile."""
+    if torch_profiling:
+        with profile(activities=activities, record_shapes=True) as prof, record_function("epoch"):
+            train_metrics = train_fn(*args, **kwargs)
+        logger.info(prof.key_averages().table())
+        prof.export_chrome_trace(f"trace_epoch_{kwargs['epoch']}.json")
+
+    elif cpython_profiling:
+        with cProfile.Profile() as pr:
+            train_metrics = train_fn(*args, **kwargs)
+        stats = pstats.Stats(pr)
+        stats.dump_stats(f"cpython_trace_epoch_{kwargs['epoch']}.prof")
+
+    else:
+        train_metrics = train_fn(*args, **kwargs)
+
+    return train_metrics
+
+
 # --- TRAINING FUNCTION ---
 def train(
     model: nn.Module,
@@ -270,12 +246,6 @@ def train(
     checkpoint_dir: str | Path,
     val_loader: DataLoader | None = None,
     scheduler: torch.optim.lr_scheduler._LRScheduler | None = None,
-    model_type: str | None = None,
-    val_inference_mode: InferenceMode = InferenceMode.SLIDING_WINDOW,
-    val_sw_size: int = 96,
-    val_sw_batch_size: int = 4,
-    val_sw_overlap: float = 0.25,
-    val_model_input_size: tuple[int, int, int] = (96, 96, 96),
     torch_profiling: bool = False,
     cpython_profiling: bool = False,
 ) -> None:
@@ -297,57 +267,22 @@ def train(
     """
     global_batch_idx = 0
     for epoch in range(current_epoch, num_epochs):
-        msg = f"Epoch {epoch + 1}/{num_epochs}: training..."
-        logger.info(msg)
-        logger.info(f"Epoch learning rate: {optimizer.param_groups[0]['lr']}")
+        logger.info("Epoch %d/%d: training...", epoch + 1, num_epochs)
 
-        if torch_profiling:
-            with profile(activities=activities, record_shapes=True) as prof:
-                with record_function("batch"):
-                    # Train for one epoch
-                    train_metrics = train_one_epoch(
-                        model=model,
-                        train_loader=train_loader,
-                        optimizer=optimizer,
-                        metrics=metrics,
-                        loss_fn=loss_fn,
-                        device=device,
-                        batch_idx=global_batch_idx,
-                        model_type=model_type,
-                    )
-            
-            logger.info(prof.key_averages().table())
-            prof.export_chrome_trace(f"trace_epoch_{epoch}.json")
-        elif cpython_profiling:
-            with cProfile.Profile() as pr:
-                # Train for one epoch
-                train_metrics = train_one_epoch(
-                    model=model,
-                    train_loader=train_loader,
-                    optimizer=optimizer,
-                    metrics=metrics,
-                    loss_fn=loss_fn,
-                    device=device,
-                    batch_idx=global_batch_idx,
-                    model_type=model_type,
-                )
-            stats = pstats.Stats(pr)
-            stats.dump_stats(f"cpython_trace_epoch_{epoch}.prof")
+        train_metrics = profile_epoch(
+            train_one_epoch,
+            model=model,
+            train_loader=train_loader,
+            optimizer=optimizer,
+            metrics=metrics,
+            loss_fn=loss_fn,
+            device=device,
+            batch_idx=global_batch_idx,
+            torch_profiling=torch_profiling,
+            cpython_profiling=cpython_profiling,
+        )
 
-        else:
-            # Train for one epoch
-            train_metrics = train_one_epoch(
-                model=model,
-                train_loader=train_loader,
-                optimizer=optimizer,
-                metrics=metrics,
-                loss_fn=loss_fn,
-                device=device,
-                batch_idx=global_batch_idx,
-                model_type=model_type,
-            )
-        
-        if isinstance(train_loader.dataset, ProprocessedNiftiDataset):
+        if isinstance(train_loader.dataset, GroupedNifitDataset):
             train_loader.dataset.next_epoch()
 
         global_batch_idx += len(train_loader)
@@ -360,7 +295,7 @@ def train(
         )
         log_metrics(
             "train",
-            train_metrics,
+            {"lr": optimizer.param_groups[0]["lr"]} | train_metrics,
             step=epoch,
             epochs=(
                 epoch,
@@ -395,13 +330,11 @@ def train(
         if scheduler:
             scheduler.step()
 
-        #logger.info(f"CUDA Memory allocated {torch.cuda.memory_allocated()/(1024**2)}MB")
-        #logger.info(f"CUDA Memory cached {torch.cuda.memory_reserved()/(1024**2)}MB")
-
-        #logger.info("garbage collection and clear cache")
         # run python garbage collection and empty gpu cache to prevent full memory training stops
         gc.collect()
         torch.cuda.empty_cache()
-
-        #logger.info(f"CUDA Memory allocated {torch.cuda.memory_allocated()/(1024**2)}MB")
-        #logger.info(f"CUDA Memory cached {torch.cuda.memory_reserved()/(1024**2)}MB")
+        msg = (
+            f"CUDA Memory allocated {torch.cuda.memory_allocated()/(1024**2)}MB "
+            f"| CUDA Memory cached {torch.cuda.memory_reserved()/(1024**2)}MB"
+        )
+        logger.info(msg)

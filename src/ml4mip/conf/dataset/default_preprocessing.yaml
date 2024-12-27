@@ -1,0 +1,6 @@
+defaults:
+  - base_dataset
+  
+transform: PATCH_UNIFORM
+max_samples: 200
+  
