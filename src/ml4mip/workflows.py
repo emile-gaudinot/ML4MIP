@@ -16,8 +16,8 @@ from ml4mip import trainer
 from ml4mip.dataset import DataLoaderConfig, get_dataset
 from ml4mip.graph_extraction import extract_graph
 from ml4mip.loss import LossConfig, get_loss
-from ml4mip.scheduler import SchedulerConfig, get_scheduler
 from ml4mip.models import ModelConfig, get_model
+from ml4mip.scheduler import SchedulerConfig, get_scheduler
 from ml4mip.utils.logging import log_hydra_config_to_mlflow, log_metrics
 from ml4mip.utils.metrics import get_metrics
 from ml4mip.utils.torch import load_checkpoint, save_model
@@ -47,11 +47,13 @@ class Config:
     loss: LossConfig = field(default_factory=LossConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
 
+
 _cs = ConfigStore.instance()
 _cs.store(
     name="base_config",
     node=Config,
 )
+
 
 @hydra.main(
     version_base=None,
@@ -104,12 +106,11 @@ def run_training(cfg: Config) -> None:
     model = get_model(cfg.model)
     model = model.to(device)
 
-    # TODO: learning rate scheduler
     optimizer = optim.AdamW(model.parameters(), lr=cfg.lr)
-    scheduler = get_scheduler(cfg.scheduler, optimizer)
-    
+
     if cfg.scheduler.linear_total_iters is None:
         cfg.scheduler.linear_total_iters = cfg.num_epochs
+    scheduler = get_scheduler(cfg.scheduler, optimizer)
 
     checkpoint_dir = (Path(cfg.model_dir) / f"{cfg.model_tag}").with_suffix("")
     current_epoch = 0
@@ -121,8 +122,12 @@ def run_training(cfg: Config) -> None:
             scheduler=(scheduler if cfg.scheduler.resume_schedule else None),
         )
         current_epoch = prev_epochs + 1
-        msg = f"Resuming training from epoch {current_epoch}/{cfg.num_epochs} with { cfg.num_epochs - current_epoch} epochs remaining"
-        logger.info(msg)
+        logger.info(
+            "Resuming training from epoch %d/%d with %d epochs remaining",
+            current_epoch,
+            cfg.num_epochs,
+            cfg.num_epochs - current_epoch,
+        )
     elif checkpoint_dir.exists() and not checkpoint_dir.is_dir():
         msg = (
             f"Checkpoint directory {checkpoint_dir} already exists and is not a directory."
