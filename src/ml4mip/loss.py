@@ -75,6 +75,7 @@ class soft_cldice(nn.Module):
         self.smooth = smooth
         self.soft_skeletonize = SoftSkeletonize(num_iter=10)
         self.exclude_background = exclude_background
+        self.sigmoid = sigmoid
 
     def forward(self, y_true, y_pred):
         if self.exclude_background:
