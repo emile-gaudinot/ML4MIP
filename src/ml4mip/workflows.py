@@ -10,13 +10,13 @@ import torch
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING, OmegaConf
 from torch import optim
-from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
 
 from ml4mip import trainer
 from ml4mip.dataset import DataLoaderConfig, get_dataset
 from ml4mip.graph_extraction import extract_graph
 from ml4mip.loss import LossConfig, get_loss
+from ml4mip.scheduler import SchedulerConfig, get_scheduler
 from ml4mip.models import ModelConfig, get_model
 from ml4mip.utils.logging import log_hydra_config_to_mlflow, log_metrics
 from ml4mip.utils.metrics import get_metrics
@@ -45,7 +45,7 @@ class Config:
     epoch_profiling_cpy: bool = False
     inference: trainer.InferenceConfig = field(default_factory=trainer.InferenceConfig)
     loss: LossConfig = field(default_factory=LossConfig)
-
+    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
 
 _cs = ConfigStore.instance()
 _cs.store(
@@ -106,9 +106,10 @@ def run_training(cfg: Config) -> None:
 
     # TODO: learning rate scheduler
     optimizer = optim.AdamW(model.parameters(), lr=cfg.lr)
-    scheduler = lr_scheduler.LinearLR(
-        optimizer, start_factor=1, end_factor=0.01, total_iters=cfg.num_epochs
-    )
+    scheduler = get_scheduler(cfg.scheduler, optimizer)
+    
+    if cfg.scheduler.linear_total_iters is None:
+        cfg.scheduler.linear_total_iters = cfg.num_epochs
 
     checkpoint_dir = (Path(cfg.model_dir) / f"{cfg.model_tag}").with_suffix("")
     current_epoch = 0
@@ -117,7 +118,7 @@ def run_training(cfg: Config) -> None:
             model=model,
             optimizer=optimizer,
             checkpoint_dir=checkpoint_dir,
-            scheduler=scheduler,
+            scheduler=(scheduler if cfg.scheduler.resume_schedule else None),
         )
         current_epoch = prev_epochs + 1
         msg = f"Resuming training from epoch {current_epoch}/{cfg.num_epochs} with { cfg.num_epochs - current_epoch} epochs remaining"
