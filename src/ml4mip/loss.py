@@ -21,6 +21,7 @@ class LossConfig:
     loss_type: LossType = LossType.CE_DICE
     lambda_dice: float = 1.0
     lambda_ce: float = 0.3
+    cedice_batch: bool = False
     alpha: float = 0.5
     sigmoid = True
 
@@ -151,6 +152,7 @@ def get_loss(cfg: LossConfig):
                 sigmoid=cfg.sigmoid,
                 lambda_dice=cfg.lambda_dice,
                 lambda_ce=cfg.lambda_ce,
+                batch=cfg.cedice_batch,
             )
         case LossType.FOCAL:
             return FocalLoss(sigmoid=cfg.sigmoid)
