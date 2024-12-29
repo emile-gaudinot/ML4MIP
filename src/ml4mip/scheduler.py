@@ -20,8 +20,11 @@ def get_scheduler(cfg: SchedulerConfig, optimizer):
     match cfg.scheheduler_type:
         case SchedulerType.LINEARLR:
             return lr_scheduler.LinearLR(
-                        optimizer, start_factor=cfg.linear_start_factor, end_factor=cfg.linear_end_factor, total_iters=cfg.linear_total_iters
-                    )
+                optimizer,
+                start_factor=cfg.linear_start_factor,
+                end_factor=cfg.linear_end_factor,
+                total_iters=cfg.linear_total_iters,
+            )
         case _:
             msg = f"Scheduler type {cfg.scheheduler_type} not supported"
             raise ValueError(msg)
