@@ -19,7 +19,7 @@ class LossType(Enum):
 @dataclass
 class LossConfig:
     loss_type: LossType = LossType.CE_DICE
-    lambda_dice: float = 0.7
+    lambda_dice: float = 1.0
     lambda_ce: float = 0.3
     alpha: float = 0.5
     sigmoid = True
