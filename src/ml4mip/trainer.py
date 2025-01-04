@@ -138,7 +138,7 @@ def inference(
                 predictor=model,
                 overlap=cfg.sw_overlap,
             )
-        case InferenceMode.RESCALE_LOGITS:
+        case InferenceMode.RESCALE:
             # Rescale the input image to the model input size
             rescaled_images = F.interpolate(
                 images,
