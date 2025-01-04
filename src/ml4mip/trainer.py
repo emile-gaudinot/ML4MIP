@@ -96,7 +96,9 @@ def train_one_epoch(
 
 class InferenceMode(Enum):
     SLIDING_WINDOW = "sliding_window"
-    RESCALE = "rescale"
+    RESCALE_BINARY = "rescale_binary"
+    RESCALE_PROBS = "rescale_probs"
+    RESCALE = "rescale_logits" # by default rescale logits to original size
     STD = "standard"
 
 
@@ -136,7 +138,7 @@ def inference(
                 predictor=model,
                 overlap=cfg.sw_overlap,
             )
-        case InferenceMode.RESCALE:
+        case InferenceMode.RESCALE_LOGITS:
             # Rescale the input image to the model input size
             rescaled_images = F.interpolate(
                 images,
@@ -153,6 +155,39 @@ def inference(
                 rescaled_outputs,
                 size=original_size,
                 mode="trilinear",  # TODO: debatable if trinlinear is the best choice / maybe nearest
+                align_corners=False,
+            )
+        case InferenceMode.RESCALE_PROBS:
+            # Rescale the input image to the model input size
+            rescaled_images = F.interpolate(
+                images,
+                size=cfg.model_input_size,
+                mode="trilinear",
+                align_corners=False,
+            )
+            rescaled_outputs = model(rescaled_images)
+            probs = torch.sigmoid(outputs)
+            original_size = images.shape[2:]
+            outputs = F.interpolate(
+                probs,
+                size=original_size,
+                mode="trilinear",
+                align_corners=False,
+            )
+        case InferenceMode.RESCALE_BINARY:
+            rescaled_images = F.interpolate(
+                images,
+                size=cfg.model_input_size,
+                mode="trilinear",
+                align_corners=False,
+            )
+            rescaled_outputs = model(rescaled_images)
+            low_res_mask = (torch.sigmoid(rescaled_outputs) >= 0.5).float()
+            original_size = images.shape[2:]
+            outputs = F.interpolate(
+                low_res_mask,
+                size=original_size,
+                mode="trilinear",
                 align_corners=False,
             )
         case _:
