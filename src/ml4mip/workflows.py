@@ -16,6 +16,7 @@ from ml4mip import trainer
 from ml4mip.dataset import DataLoaderConfig, get_dataset
 from ml4mip.graph_extraction import extract_graph
 from ml4mip.loss import LossConfig, get_loss
+from ml4mip.scheduler import SchedulerConfig, get_scheduler
 from ml4mip.models import ModelConfig, get_model
 from ml4mip.scheduler import SchedulerConfig, get_scheduler
 from ml4mip.utils.logging import log_hydra_config_to_mlflow, log_metrics
@@ -46,7 +47,6 @@ class Config:
     inference: trainer.InferenceConfig = field(default_factory=trainer.InferenceConfig)
     loss: LossConfig = field(default_factory=LossConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
-
 
 _cs = ConfigStore.instance()
 _cs.store(

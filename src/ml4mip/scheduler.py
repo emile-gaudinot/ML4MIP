@@ -3,18 +3,17 @@ from enum import Enum
 
 from torch.optim import lr_scheduler
 
-
 class SchedulerType(Enum):
     LINEARLR = "linearlr"
 
 
 @dataclass
-class SchedulerConfig:
+class SchedulerConfig:	
     scheheduler_type: SchedulerType = SchedulerType.LINEARLR
-    linear_start_factor = 1
-    linear_end_factor = 0.01
-    linear_total_iters = None
-    resume_schedule = True
+    linear_start_factor: float = 1
+    linear_end_factor: float = 0.01
+    linear_total_iters: int | None = None
+    resume_schedule: bool = True
 
 
 def get_scheduler(cfg: SchedulerConfig, optimizer):
