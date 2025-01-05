@@ -88,6 +88,10 @@ def train_one_epoch(
         batch_metric.reset()
         progress_bar.set_postfix({"Batch Loss": loss.item()})
 
+        # run python garbage collection and empty gpu cache to prevent full memory training stops
+        gc.collect()
+        torch.cuda.empty_cache()
+
     return {
         "loss": epoch_loss / len(train_loader),
         **(metrics.aggregate()),
@@ -365,9 +369,6 @@ def train(
         if scheduler:
             scheduler.step()
 
-        # run python garbage collection and empty gpu cache to prevent full memory training stops
-        gc.collect()
-        torch.cuda.empty_cache()
         msg = (
             f"CUDA Memory allocated {torch.cuda.memory_allocated()/(1024**2)}MB "
             f"| CUDA Memory cached {torch.cuda.memory_reserved()/(1024**2)}MB"
