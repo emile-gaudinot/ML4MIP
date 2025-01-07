@@ -20,7 +20,7 @@ from ml4mip.scheduler import SchedulerConfig, get_scheduler
 from ml4mip.models import ModelConfig, get_model
 from ml4mip.scheduler import SchedulerConfig, get_scheduler
 from ml4mip.utils.logging import log_hydra_config_to_mlflow, log_metrics
-from ml4mip.utils.metrics import get_metrics
+from ml4mip.utils.metrics import get_metrics, MetricType
 from ml4mip.utils.torch import load_checkpoint, save_model
 from ml4mip.visualize import visualize_model
 
@@ -141,7 +141,8 @@ def run_training(cfg: Config) -> None:
         logger.info(msg)
 
     loss_fn = get_loss(cfg.loss)
-    metrics = get_metrics()
+    metrics = get_metrics(metric_types=(MetricType.DICE))
+    metrics_val = get_metrics()
 
     # Initialize MLflow
     mlflow.set_tracking_uri(cfg.ml_flow_uri)  # Update path as needed
@@ -158,6 +159,7 @@ def run_training(cfg: Config) -> None:
                 optimizer=optimizer,
                 loss_fn=loss_fn,
                 metrics=metrics,
+                metrics_val=metrics_val,
                 device=device,
                 current_epoch=current_epoch,
                 num_epochs=cfg.num_epochs,

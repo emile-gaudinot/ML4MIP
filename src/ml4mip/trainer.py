@@ -278,6 +278,7 @@ def train(
     optimizer: optim.Optimizer,
     loss_fn: nn.Module,
     metrics: MetricsManager,
+    metrics_val: MetricsManager,
     device: torch.device,
     current_epoch: int,
     num_epochs: int,
@@ -350,7 +351,7 @@ def train(
                 model=model,
                 val_loader=val_loader,
                 loss_fn=loss_fn,
-                metrics=metrics,
+                metrics=metrics_val,
                 device=device,
                 inference_cfg=inference_cfg,
             )
