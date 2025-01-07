@@ -141,7 +141,7 @@ def run_training(cfg: Config) -> None:
         logger.info(msg)
 
     loss_fn = get_loss(cfg.loss)
-    metrics = get_metrics(metric_types=(MetricType.DICE))
+    metrics = get_metrics(metric_types=[MetricType.DICE])
     metrics_val = get_metrics()
 
     # Initialize MLflow
