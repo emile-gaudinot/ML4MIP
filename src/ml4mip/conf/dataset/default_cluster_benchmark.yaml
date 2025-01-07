@@ -9,6 +9,7 @@ train:
   split_ratio: 1
   grouped: true
   transform: TOTENSOR
+  max_epochs: 10
 
 val:
   data_dir: "/group/cake/preprocessed_data/uniform96_val"
