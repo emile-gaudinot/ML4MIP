@@ -19,6 +19,7 @@ class ModelType(Enum):
     UNET = "unet"
     UNETMONAI1 = "unet_monai_1"
     UNETMONAI2 = "unet_monai_2"
+    UNETMONAI2_LEAKYRELU = "unet_monai_2_lr"
     UNETMONAI3 = "unet_monai_3"
     MEDSAM = "medsam"
 
@@ -243,6 +244,16 @@ def get_model(cfg: ModelConfig) -> torch.nn.Module:
                 channels=(32, 64, 128, 256, 320, 320),
                 strides=(2, 2, 2, 2, 2),
                 num_res_units=2,
+            )
+        case ModelType.UNETMONAI2_LEAKYRELU:
+            model = UNet(
+                spatial_dims=3,
+                in_channels=1,
+                out_channels=1,
+                channels=(32, 64, 128, 256, 320, 320),
+                strides=(2, 2, 2, 2, 2),
+                num_res_units=2,
+                act="LeakyReLU",
             )
         case ModelType.UNETMONAI3:
             model = UNet(
