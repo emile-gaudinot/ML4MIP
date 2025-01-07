@@ -57,8 +57,8 @@ TARGET_SPATIAL_SIZE = (600, 600, 280)
 GOOD_SIGMA_RATIO = 0.1
 POS_CENTER_PROB = 0.75
 # this was calculated by the mean and std voxel value of the dataset
-DATASET_VALUE_MEAN = -183.74602
-DATASET_VALUE_STD = 439.93393
+DATASET_VALUE_MEAN = -186.26184
+DATASET_VALUE_STD = 440.80203
 
 @dataclass
 class DatasetConfig:
