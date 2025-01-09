@@ -25,6 +25,7 @@ from monai.transforms import (
     Resized,
     ResizeWithPadOrCropd,
     ScaleIntensityd,
+    NormalizeIntensityd,
     Spacingd,
     ToTensord,
 )
@@ -55,7 +56,9 @@ TARGET_SPATIAL_SIZE = (600, 600, 280)
 # This was determined with some experiments. It's a good value for the sigma.
 GOOD_SIGMA_RATIO = 0.1
 POS_CENTER_PROB = 0.75
-
+# this was calculated by the mean and std voxel value of the dataset
+DATASET_VALUE_MEAN = -186.26184
+DATASET_VALUE_STD = 440.80203
 
 @dataclass
 class DatasetConfig:
@@ -696,11 +699,12 @@ def get_default_transforms(
         ),
         # 2) Scale the intensity of the image to [0, 1]
         # this really depends on the input range. it could happen that the range is not meaningful
-        ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
+        NormalizeIntensityd(keys=["image"], subtrahend=DATASET_VALUE_MEAN, divisor=DATASET_VALUE_STD),
         # 3) Resize the image and mask to a target spatial size without distorting the aspect ratio
         ResizeWithPadOrCropd(
             keys=["image", "mask"],
             spatial_size=target_spatial_size,
+            mode="edge",
         ),
         ToTensord(keys=["image", "mask"]),
     ]
