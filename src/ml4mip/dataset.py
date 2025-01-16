@@ -25,6 +25,7 @@ from monai.transforms import (
     RandSpatialCropd,
     Resized,
     ResizeWithPadOrCropd,
+    ScaleIntensityd,
     Spacingd,
     ToTensord,
 )
@@ -751,6 +752,30 @@ def get_default_transforms(
     ]
 
 
+def get_scaling_transforms(
+    target_pixel_dim: tuple[float, float, float],
+    target_spatial_size: tuple[int, int, int],
+) -> list[MapTransform]:
+    return [
+        # 1) Resample the image and mask to have the same voxel spacing
+        Spacingd(
+            keys=["image", "mask"],
+            pixdim=target_pixel_dim,
+            mode=("bilinear", "nearest"),
+        ),
+        # 2) Scale the intensity of the image to [0, 1]
+        # this really depends on the input range. it could happen that the range is not meaningful
+        ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
+        # 3) Resize the image and mask to a target spatial size without distorting the aspect ratio
+        ResizeWithPadOrCropd(
+            keys=["image", "mask"],
+            spatial_size=target_spatial_size,
+            mode="edge",
+        ),
+        ToTensord(keys=["image", "mask"]),
+    ]
+
+
 def get_resize_transform(
     size: Sequence[int] = TARGET_SPATIAL_SIZE,
     target_pixel_dim: tuple[float, float, float] = TARGET_PIXEL_DIM,
@@ -840,6 +865,14 @@ def get_std_transform(
     target_spatial_size: tuple[int, int, int] = TARGET_SPATIAL_SIZE,
 ):
     transforms = get_default_transforms(target_pixel_dim, target_spatial_size)
+    return Compose(transforms)
+
+
+def get_scaling_transform(
+    target_pixel_dim: tuple[float, float, float] = TARGET_PIXEL_DIM,
+    target_spatial_size: tuple[int, int, int] = TARGET_SPATIAL_SIZE,
+):
+    transforms = get_scaling_transforms(target_pixel_dim, target_spatial_size)
     return Compose(transforms)
 
 
