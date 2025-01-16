@@ -20,12 +20,11 @@ from monai.transforms import (
     Compose,
     LoadImaged,
     MapTransform,
+    NormalizeIntensityd,
     Randomizable,
     RandSpatialCropd,
     Resized,
     ResizeWithPadOrCropd,
-    ScaleIntensityd,
-    NormalizeIntensityd,
     Spacingd,
     ToTensord,
 )
@@ -59,6 +58,7 @@ POS_CENTER_PROB = 0.75
 # this was calculated by the mean and std voxel value of the dataset
 DATASET_VALUE_MEAN = -186.26184
 DATASET_VALUE_STD = 440.80203
+
 
 @dataclass
 class DatasetConfig:
@@ -430,6 +430,45 @@ class GroupedNifitDataset(ABCNiftiDataset):
             self.init_cache()
 
 
+class GraphDataset(Dataset):
+    def __init__(
+        self, data_dir: str | Path = "/data/training_data", transform: Callable | None = None
+    ):
+        self.data_dir = Path(data_dir)
+        self.relevant_ids = sorted(
+            self.get_ids("img")
+            .intersection(self.get_ids("label"))
+            .intersection(self.get_ids("graph"))
+        )
+
+        print(f"Found {len(self.relevant_ids)} relevant IDs")
+        self.image_files = [next(self.data_dir.glob(f"{id_}*img*")) for id_ in self.relevant_ids]
+        self.mask_files = [next(self.data_dir.glob(f"{id_}*label*")) for id_ in self.relevant_ids]
+        self.graph_files = [next(self.data_dir.glob(f"{id_}*graph*")) for id_ in self.relevant_ids]
+
+        self.loader = LoadImaged(keys=["image", "mask"], ensure_channel_first=True)
+
+        self.transform = transform or get_std_transform()
+
+    def get_ids(self, item: str):
+        return {p.stem.split(".")[0] for p in self.data_dir.glob(f"*{item}*")}
+
+    def __len__(self):
+        return len(self.relevant_ids)
+
+    def __getitem__(self, idx):
+        data_dict = {
+            "image": self.image_files[idx],
+            "mask": self.mask_files[idx],
+        }
+        # Load images and metadata
+        loaded_data = self.loader(data_dict)
+        loaded_data = self.transform(loaded_data)
+        graph_file = self.graph_files[idx]
+
+        return loaded_data["image"], loaded_data["mask"], graph_file
+
+
 def get_dataset(
     cfg: DataLoaderConfig,
 ) -> tuple[NiftiDataset, NiftiDataset] | tuple[GroupedNifitDataset, NiftiDataset]:
@@ -699,7 +738,9 @@ def get_default_transforms(
         ),
         # 2) Scale the intensity of the image to [0, 1]
         # this really depends on the input range. it could happen that the range is not meaningful
-        NormalizeIntensityd(keys=["image"], subtrahend=DATASET_VALUE_MEAN, divisor=DATASET_VALUE_STD),
+        NormalizeIntensityd(
+            keys=["image"], subtrahend=DATASET_VALUE_MEAN, divisor=DATASET_VALUE_STD
+        ),
         # 3) Resize the image and mask to a target spatial size without distorting the aspect ratio
         ResizeWithPadOrCropd(
             keys=["image", "mask"],
