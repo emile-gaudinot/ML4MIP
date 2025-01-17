@@ -394,3 +394,5 @@ def extract_graph(
             graph, merged_graph, spacing=cfg.spacing_skeleton
         )
         export2json(evenly_spaced_skeleton_points, graph, path)
+
+    return graph, skeleton
