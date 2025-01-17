@@ -464,10 +464,16 @@ class GraphDataset(Dataset):
         }
         # Load images and metadata
         loaded_data = self.loader(data_dict)
-        loaded_data = self.transform(loaded_data)
+        transformed_data = self.transform(loaded_data)
         graph_file = self.graph_files[idx]
 
-        return loaded_data["image"], loaded_data["mask"], graph_file
+        return {
+            "image": transformed_data["image"],
+            "mask": transformed_data["mask"],
+            "raw_image": loaded_data["image"],
+            "raw_mask": loaded_data["mask"],
+            "graph": graph_file,
+        }
 
 
 def get_dataset(
