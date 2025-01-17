@@ -745,9 +745,10 @@ def get_default_transforms(
         ),
         # 2) Scale the intensity of the image to [0, 1]
         # this really depends on the input range. it could happen that the range is not meaningful
-        NormalizeIntensityd(
-            keys=["image"], subtrahend=DATASET_VALUE_MEAN, divisor=DATASET_VALUE_STD
-        ),
+        #NormalizeIntensityd(
+        #    keys=["image"], subtrahend=DATASET_VALUE_MEAN, divisor=DATASET_VALUE_STD
+        #),
+        ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
         # 3) Resize the image and mask to a target spatial size without distorting the aspect ratio
         ResizeWithPadOrCropd(
             keys=["image", "mask"],
