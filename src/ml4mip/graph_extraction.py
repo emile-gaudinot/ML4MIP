@@ -305,65 +305,74 @@ def extract_evenly_spaced_skeleton_points(reduced_graph, original_graph, spacing
 def nodes_edges2json(d: dict, graph: nx.Graph):
     node_list = []
     nodes, edges = {}, {}
-
+    
     for i, edge in enumerate(d.keys()):
         n1, n2 = edge
         node_list += [n1, n2]
-
+        
         # Transform the skeleton of this edge into the desired `skeletons` dict
-        skeletons = {}
-        for j, sk_node in enumerate(d[edge]):
+        skeletons = []
+        for sk_node in d[edge]:
+            # Intermediate node
             if type(sk_node) == str:
-                warnings.warn(
-                    f"Wrong type of the skeleton node: {sk_node}", UserWarning, stacklevel=2
-                )
-                continue
-            coos = graph.nodes(data=True)[sk_node]["coordinate"]
-            skeletons[j] = list(coos)
-
+                sk_node1, sk_node2 = int(sk_node.split('_')[1]), int(sk_node.split('_')[2])
+                coos1 = graph.nodes(data=True)[sk_node1]['coordinate']
+                coos2 = graph.nodes(data=True)[sk_node2]['coordinate']
+                if not list(coos1) in skeletons:
+                    skeletons += [list(coos1)]
+                if not list(coos2) in skeletons:
+                    skeletons += [list(coos2)]
+            # Not an intermediate node
+            else:
+                coos = graph.nodes(data=True)[sk_node]['coordinate']
+                if not list(coos) in skeletons:
+                    skeletons += [list(coos)]
+        
         # Transform the edge to the desired `edges` dict
         edges[i] = {
-            "length": 0,  # LENGTH STILL HAS TO BE COMPUTED
-            "skeletons": list(skeletons.values()),
-            "source": n1,
-            "target": n2,
+            'length': 0, # LENGTH STILL HAS TO BE COMPUTED
+            'skeletons': skeletons,
+            'source': n1,
+            'target': n2
         }
-
+        
     # Add the nodes and their coordinates to the `nodes` dict
     node_list = sorted(list(set(node_list)))
     for i, node in enumerate(node_list):
-        coos = graph.nodes(data=True)[node]["coordinate"]
+        coos = graph.nodes(data=True)[node]['coordinate']
         nodes[i] = {
-            "pos": list(coos),
-            "is_root": False,  # WE STILL NEED TO DETERMINE THE ROOT
-            "id": node,
+            'pos': list(coos),
+            'is_root': False, # WE STILL NEED TO DETERMINE THE ROOT
+            'id': node
         }
-
+    
     return nodes, edges
 
 
 def convert_numpy_types(obj):
     if isinstance(obj, np.integer):
         return int(obj)
-    if isinstance(obj, np.floating):
+    elif isinstance(obj, np.floating):
         return float(obj)
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
-def export2json(d: dict, graph: nx.Graph, path: str | Path):
+def export2json(d: dict, graph: nx.Graph):
     nodes, edges = nodes_edges2json(d, graph)
-
+    
     # Create the final JSON
     json_dict = {
-        "directed": True,
-        "multigraph": False,
-        "graph": {"coordinateSystem": "RAS"},
-        "nodes": list(nodes.values()),
-        "edges": list(edges.values()),
+        'directed': True,
+        'multigraph': False,
+        'graph': {
+            'coordinateSystem': "RAS"
+        },
+        'nodes': list(nodes.values()),
+        'edges': list(edges.values())
     }
-
+    
     # Export the dictionnary into JSON
-    with open(path, "w") as json_file:
+    with open('test.graph.json', 'w') as json_file:
         json.dump(json_dict, json_file, default=convert_numpy_types, indent=4)
 
 
