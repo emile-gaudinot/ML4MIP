@@ -271,7 +271,7 @@ def run_validation(cfg: Config):
 @dataclass
 class RunInferenceConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
-    inference_cfg: trainer.InferenceConfig = field(default_factory=trainer.InferenceConfig)
+    inference: trainer.InferenceConfig = field(default_factory=trainer.InferenceConfig)
     batch_size: int = 1
     input_dir: str = MISSING
     output_dir: str = MISSING
@@ -320,7 +320,7 @@ def run_inference(cfg: RunInferenceConfig):
             output = trainer.inference(
                 images=images,
                 model=model,
-                inference_cfg=cfg.inference_cfg,
+                inference_cfg=cfg.inference,
             )
 
             # output is of shape (bs, c, h, w, d)
