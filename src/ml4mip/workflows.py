@@ -296,7 +296,7 @@ def run_inference(cfg: RunInferenceConfig):
     transform = get_scaling_transform()
 
     ds = ImageMaskDataset(
-        input_dir=cfg.input_dir,
+        data_dir=cfg.input_dir,
         transform=transform,
     )
     dataloader = DataLoader(
