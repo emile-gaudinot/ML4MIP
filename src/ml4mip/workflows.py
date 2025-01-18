@@ -1,6 +1,7 @@
 import logging
 import sys
 from dataclasses import dataclass, field
+from multiprocessing import Pool
 from pathlib import Path
 
 import hydra
@@ -8,19 +9,26 @@ import mlflow
 import mlflow.pytorch
 import torch
 from hydra.core.config_store import ConfigStore
+from monai.transforms import SaveImage
 from omegaconf import MISSING, OmegaConf
 from torch import optim
 from torch.utils.data import DataLoader
 
 from ml4mip import trainer
-from ml4mip.dataset import DataLoaderConfig, get_dataset
-from ml4mip.graph_extraction import extract_graph
+from ml4mip.dataset import (
+    DataLoaderConfig,
+    ImageMaskDataset,
+    UnlabeledDataset,
+    get_dataset,
+    get_scaling_transform,
+    reshape_to_original,
+)
+from ml4mip.graph_extraction import ExtractionConfig, extract_graph
 from ml4mip.loss import LossConfig, get_loss
-from ml4mip.scheduler import SchedulerConfig, get_scheduler
 from ml4mip.models import ModelConfig, get_model
 from ml4mip.scheduler import SchedulerConfig, get_scheduler
 from ml4mip.utils.logging import log_hydra_config_to_mlflow, log_metrics
-from ml4mip.utils.metrics import get_metrics, MetricType
+from ml4mip.utils.metrics import MetricType, get_metrics
 from ml4mip.utils.torch import load_checkpoint, save_model
 from ml4mip.visualize import visualize_model
 
@@ -47,6 +55,7 @@ class Config:
     inference: trainer.InferenceConfig = field(default_factory=trainer.InferenceConfig)
     loss: LossConfig = field(default_factory=LossConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
+
 
 _cs = ConfigStore.instance()
 _cs.store(
@@ -256,3 +265,105 @@ def run_validation(cfg: Config):
                 extract_graph=(extract_graph if cfg.extract_graph else None),
                 inference_cfg=cfg.inference,
             )
+
+
+@dataclass
+class RunInferenceConfig:
+    model: ModelConfig = field(default_factory=ModelConfig)
+    inference_cfg: trainer.InferenceConfig = field(default_factory=trainer.InferenceConfig)
+    batch_size: int = 1
+    input_dir: str = MISSING
+    output_dir: str = MISSING
+    num_workers: int = 4
+
+_cs.store(
+    name="base_inference_config",
+    node=RunInferenceConfig,
+)
+
+@hydra.main(version_base=None, config_name="base_inference_config")
+def run_inference(cfg: RunInferenceConfig):
+    logger.info(OmegaConf.to_yaml(cfg))
+    logger.info("Starting inference script")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Model
+    model = get_model(cfg.model)
+    model = model.to(device)
+
+    transform = get_scaling_transform()
+
+    ds = ImageMaskDataset(
+        input_dir=cfg.input_dir,
+        transform=transform,
+    )
+    dataloader = DataLoader(
+        ds,
+        batch_size=cfg.batch_size,
+        shuffle=False,
+        num_workers=cfg.num_workers,
+        pin_memory=torch.cuda.is_available(),
+    )
+
+    save_output = SaveImage(
+        output_dir=cfg.output_dir,
+        output_ext="label.nii.gz",
+        separate_folder=False,
+        print_log=True,
+    )
+
+    for images, _ in dataloader:
+        images = images.to(device)
+        with torch.no_grad():
+            output = trainer.inference(
+                images=images,
+                model=model,
+                inference_cfg=cfg.inference_cfg,
+            )
+
+            # output is of shape (bs, c, h, w, d)
+            # iterate over batch size
+            for j in range(output.shape[0]):
+                pred = output[j]
+                binary_mask = pred >= 0.5
+                reshaped_mask = reshape_to_original(binary_mask)
+                save_output(reshaped_mask.squeeze(0).cpu(), meta_data=pred.meta)
+
+    for file in Path(cfg.output_dir).glob("*_trans*"):
+        # Remove 'label_trans.' from the filename
+        new_name = file.name.replace("img_trans.", "").replace("label_trans.", "")
+        new_path = file.with_name(new_name)
+        file.rename(new_path)
+        logger.info("Renamed %s to %s", file.name, new_name)
+
+@dataclass
+class RunGraphExtractionConfig:
+    input_dir: str = MISSING
+    output_dir: str = MISSING
+    num_workers: int = 4
+    extraction_cfg: ExtractionConfig = field(default_factory=ExtractionConfig)
+    max_samples: int | None = None
+
+
+_cs.store(
+    name="base_extraction_config",
+    node=RunGraphExtractionConfig,
+)
+
+@hydra.main(version_base=None, config_name="base_extraction_config")
+def run_graph_extraction(cfg: RunGraphExtractionConfig):
+    ds = UnlabeledDataset(
+        input_dir=cfg.input_dir,
+    )
+
+    def handle_idx(idx):
+        nifti_obj = ds[idx]
+        binary_volume = nifti_obj.get_fdata()
+        file_id = nifti_obj.get_filename().split(".")[0]
+        path = Path(cfg.output_dir) / f"{file_id}.graph.json"
+        extract_graph(binary_volume, cfg.extraction_cfg, path=path)
+
+    indices = range(len(ds)) if cfg.max_samples is None else range(cfg.max_samples)
+    with Pool(processes=cfg.num_workers) as pool:
+        pool.map(handle_idx, indices)

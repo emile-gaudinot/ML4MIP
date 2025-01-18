@@ -43,7 +43,7 @@ def create_patches(
     # 2) create directory with output_dir
     output_dir = Path(output_dir)
     output_dir.mkdir(exist_ok=True, parents=True)
-    
+
     # 3) repeat n_patches times:
     for i in range(n_patches):
         image_saver = SaveImaged(

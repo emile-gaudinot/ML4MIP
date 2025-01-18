@@ -3,12 +3,13 @@ from enum import Enum
 
 from torch.optim import lr_scheduler
 
+
 class SchedulerType(Enum):
     LINEARLR = "linearlr"
 
 
 @dataclass
-class SchedulerConfig:	
+class SchedulerConfig:
     scheheduler_type: SchedulerType = SchedulerType.LINEARLR
     linear_start_factor: float = 1
     linear_end_factor: float = 0.01

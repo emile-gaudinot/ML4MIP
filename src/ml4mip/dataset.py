@@ -11,6 +11,7 @@ from pathlib import Path
 
 # from typing import override
 import matplotlib.pyplot as plt
+import nibabel as nib
 import numpy as np
 import torch
 from hydra.core.config_store import ConfigStore
@@ -20,12 +21,13 @@ from monai.transforms import (
     Compose,
     LoadImaged,
     MapTransform,
-    NormalizeIntensityd,
     Randomizable,
     RandSpatialCropd,
     Resized,
+    ResizeWithPadOrCrop,
     ResizeWithPadOrCropd,
     ScaleIntensityd,
+    Spacing,
     Spacingd,
     ToTensord,
 )
@@ -476,6 +478,47 @@ class GraphDataset(Dataset):
         }
 
 
+class ImageMaskDataset(Dataset):
+    def __init__(
+        self, data_dir: str | Path = "/data/training_data", transform: Callable | None = None
+    ):
+        self.data_dir = Path(data_dir)
+
+        self.image_files = sorted(self.data_dir.glob("*img*"), key=lambda p: p.stem.split(".")[0])
+        self.mask_files = sorted(self.data_dir.glob("*label*"), key=lambda p: p.stem.split(".")[0])
+
+        self.loader = LoadImaged(keys=["image", "mask"], ensure_channel_first=True)
+        self.transform = transform or get_std_transform()
+
+    def __len__(self):
+        return len(self.relevant_ids)
+
+    def __getitem__(self, idx):
+        data_dict = {
+            "image": self.image_files[idx],
+            "mask": self.mask_files[idx],
+        }
+        # Load images and metadata
+        loaded_data = self.loader(data_dict)
+        loaded_data = self.transform(loaded_data)
+
+        return loaded_data["image"], loaded_data["mask"]
+
+
+class UnlabeledDataset(Dataset):
+    def __init__(self, data_dir: str | Path = "/data/training_data", string_label: str = "label"):
+        self.data_dir = Path(data_dir)
+        self.files = sorted(
+            self.data_dir.glob(f"*{string_label}*"), key=lambda p: p.stem.split(".")[0]
+        )
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        return nib.load(self.files[idx])
+
+
 def get_dataset(
     cfg: DataLoaderConfig,
 ) -> tuple[NiftiDataset, NiftiDataset] | tuple[GroupedNifitDataset, NiftiDataset]:
@@ -745,9 +788,9 @@ def get_default_transforms(
         ),
         # 2) Scale the intensity of the image to [0, 1]
         # this really depends on the input range. it could happen that the range is not meaningful
-        #NormalizeIntensityd(
+        # NormalizeIntensityd(
         #    keys=["image"], subtrahend=DATASET_VALUE_MEAN, divisor=DATASET_VALUE_STD
-        #),
+        # ),
         ScaleIntensityd(keys=["image"], minv=0.0, maxv=1.0),
         # 3) Resize the image and mask to a target spatial size without distorting the aspect ratio
         ResizeWithPadOrCropd(
@@ -930,3 +973,26 @@ def perform_mask_transformation(mask, mask_operation: MaskOperations):
         mask[mask != 1] = 0
         return mask
     return mask
+
+
+def reshape_to_original(mask):
+    original_shape = mask.meta.get("spatial_shape")
+    original_pixel_spacing = mask.meta.get("pixdim")
+    if original_shape is None:
+        msg = "Original shape information is not available in the metadata."
+        raise ValueError(msg)
+    if original_pixel_spacing is None:
+        msg = "Original pixel spacing information is not available in the metadata."
+        raise ValueError(msg)
+    return Compose(
+        [
+            Spacing(
+                pixdim=original_pixel_spacing[1:4].tolist(),
+                mode="nearest",
+            ),
+            ResizeWithPadOrCrop(
+                spatial_size=original_shape.tolist(),
+                mode="nearest",  # Use 'nearest' for binary segmentation masks
+            ),
+        ]
+    )(mask)

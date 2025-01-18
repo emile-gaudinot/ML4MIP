@@ -102,7 +102,7 @@ class InferenceMode(Enum):
     SLIDING_WINDOW = "sliding_window"
     RESCALE_BINARY = "rescale_binary"
     RESCALE_PROBS = "rescale_probs"
-    RESCALE = "rescale_logits" # by default rescale logits to original size
+    RESCALE = "rescale_logits"  # by default rescale logits to original size
     STD = "standard"
 
 
@@ -126,7 +126,7 @@ def inference(
     images: torch.Tensor,
     model: nn.Module,
     cfg: InferenceConfig,
-):
+) -> torch.Tensor:
     match cfg.mode:
         case InferenceMode.SLIDING_WINDOW:
             # sliding_window_inference divides the input image into smaller overlapping windows
