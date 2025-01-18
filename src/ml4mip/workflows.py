@@ -13,6 +13,7 @@ from monai.transforms import SaveImage
 from omegaconf import MISSING, OmegaConf
 from torch import optim
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from ml4mip import trainer
 from ml4mip.dataset import (
@@ -305,7 +306,7 @@ def run_inference(cfg: RunInferenceConfig):
         num_workers=cfg.num_workers,
         pin_memory=torch.cuda.is_available(),
     )
-
+    Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
     save_output = SaveImage(
         output_dir=cfg.output_dir,
         output_ext="label.nii.gz",
@@ -313,7 +314,7 @@ def run_inference(cfg: RunInferenceConfig):
         print_log=True,
     )
 
-    for images, _ in dataloader:
+    for images, _ in tqdm(dataloader):
         images = images.to(device)
         with torch.no_grad():
             output = trainer.inference(
@@ -357,6 +358,7 @@ def run_graph_extraction(cfg: RunGraphExtractionConfig):
         input_dir=cfg.input_dir,
     )
 
+    Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
     def handle_idx(idx):
         nifti_obj = ds[idx]
         binary_volume = nifti_obj.get_fdata()
