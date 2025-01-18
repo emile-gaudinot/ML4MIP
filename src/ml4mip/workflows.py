@@ -9,7 +9,14 @@ import mlflow
 import mlflow.pytorch
 import torch
 from hydra.core.config_store import ConfigStore
-from monai.transforms import SaveImage
+from monai.transforms import (
+    Compose,
+    ResizeWithPadOrCrop,
+    SaveImage,
+    ScaleIntensity,
+    Spacing,
+    ToTensord,
+)
 from omegaconf import MISSING, OmegaConf
 from torch import optim
 from torch.utils.data import DataLoader
@@ -17,11 +24,12 @@ from tqdm import tqdm
 
 from ml4mip import trainer
 from ml4mip.dataset import (
+    TARGET_PIXEL_DIM,
+    TARGET_SPATIAL_SIZE,
     DataLoaderConfig,
-    ImageMaskDataset,
+    ImageDataset,
     UnlabeledDataset,
     get_dataset,
-    get_scaling_transform,
     reshape_to_original,
 )
 from ml4mip.graph_extraction import ExtractionConfig, extract_graph
@@ -78,27 +86,6 @@ def run_training(cfg: Config) -> None:
     )  # this is important, so the values are treated as in the workflow.Config object
 
     logger.info("Starting model training script")
-
-    # TODO: checks don't make sense with preprocessed datasets, update:
-    # if cfg.inference.mode == trainer.InferenceMode.SLIDING_WINDOW and cfg.dataset.train.transform not in (
-    #     TransformType.PATCH_POS_CENTER,
-    #     TransformType.PATCH_CENTER_GAUSSIAN,
-    # ):
-    #     msg = (
-    #         "Sliding window validation is only supported for patch-based datasets. "
-    #         "Please set the dataset.transform to 'PATCH' in the configuration file."
-    #     )
-    #     raise ValueError(msg)
-
-    # if (
-    #     cfg.inference.mode == trainer.InferenceMode.RESCALE
-    #     and cfg.dataset.transform != TransformType.RESIZE
-    # ):
-    #     msg = (
-    #         "Rescale validation is only supported for resize-based datasets. "
-    #         "Please set the dataset.transform to 'RESIZE' in the configuration file."
-    #     )
-    #     raise ValueError(msg)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_ds, val_ds = get_dataset(cfg.dataset)
@@ -277,10 +264,12 @@ class RunInferenceConfig:
     output_dir: str = MISSING
     num_workers: int = 4
 
+
 _cs.store(
     name="base_inference_config",
     node=RunInferenceConfig,
 )
+
 
 @hydra.main(version_base=None, config_name="base_inference_config")
 def run_inference(cfg: RunInferenceConfig):
@@ -293,11 +282,22 @@ def run_inference(cfg: RunInferenceConfig):
     model = get_model(cfg.model)
     model = model.to(device)
 
-    transform = get_scaling_transform()
-
-    ds = ImageMaskDataset(
-        data_dir=cfg.input_dir,
-        transform=transform,
+    ds = ImageDataset(
+        img_dir=cfg.input_dir,
+        transform=Compose(
+            [
+                Spacing(
+                    pixdim=TARGET_PIXEL_DIM,
+                    mode="bilinear",
+                ),
+                ScaleIntensity(minv=0.0, maxv=1.0),
+                ResizeWithPadOrCrop(
+                    spatial_size=TARGET_SPATIAL_SIZE,
+                    mode="edge",
+                ),
+                ToTensord(),
+            ]
+        ),
     )
     dataloader = DataLoader(
         ds,
@@ -314,7 +314,7 @@ def run_inference(cfg: RunInferenceConfig):
         print_log=True,
     )
 
-    for images, _ in tqdm(dataloader):
+    for images in tqdm(dataloader):
         images = images.to(device)
         with torch.no_grad():
             output = trainer.inference(
@@ -338,6 +338,7 @@ def run_inference(cfg: RunInferenceConfig):
         file.rename(new_path)
         logger.info("Renamed %s to %s", file.name, new_name)
 
+
 @dataclass
 class RunGraphExtractionConfig:
     input_dir: str = MISSING
@@ -352,6 +353,7 @@ _cs.store(
     node=RunGraphExtractionConfig,
 )
 
+
 @hydra.main(version_base=None, config_name="base_extraction_config")
 def run_graph_extraction(cfg: RunGraphExtractionConfig):
     ds = UnlabeledDataset(
@@ -359,6 +361,7 @@ def run_graph_extraction(cfg: RunGraphExtractionConfig):
     )
 
     Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
+
     def handle_idx(idx):
         nifti_obj = ds[idx]
         binary_volume = nifti_obj.get_fdata()

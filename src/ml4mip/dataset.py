@@ -19,6 +19,7 @@ from monai.config import KeysCollection
 from monai.data import MetaTensor
 from monai.transforms import (
     Compose,
+    LoadImage,
     LoadImaged,
     MapTransform,
     Randomizable,
@@ -478,31 +479,17 @@ class GraphDataset(Dataset):
         }
 
 
-class ImageMaskDataset(Dataset):
-    def __init__(
-        self, data_dir: str | Path = "/data/training_data", transform: Callable | None = None
-    ):
-        self.data_dir = Path(data_dir)
-
-        self.image_files = sorted(self.data_dir.glob("*img*"), key=lambda p: p.stem.split(".")[0])
-        self.mask_files = sorted(self.data_dir.glob("*label*"), key=lambda p: p.stem.split(".")[0])
-
-        self.loader = LoadImaged(keys=["image", "mask"], ensure_channel_first=True)
-        self.transform = transform or get_std_transform()
+class ImageDataset(Dataset):
+    def __init__(self, data_dir: str | Path, transform: Callable):
+        self.image_files = sorted(Path(data_dir).glob("*img*"), key=lambda p: p.stem.split(".")[0])
+        self.loader = LoadImage(ensure_channel_first=True)
+        self.transform = transform
 
     def __len__(self):
         return len(self.relevant_ids)
 
     def __getitem__(self, idx):
-        data_dict = {
-            "image": self.image_files[idx],
-            "mask": self.mask_files[idx],
-        }
-        # Load images and metadata
-        loaded_data = self.loader(data_dict)
-        loaded_data = self.transform(loaded_data)
-
-        return loaded_data["image"], loaded_data["mask"]
+        return self.transform(self.loader(self.image_files[idx]))
 
 
 class UnlabeledDataset(Dataset):
