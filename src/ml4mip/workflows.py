@@ -15,7 +15,7 @@ from monai.transforms import (
     SaveImage,
     ScaleIntensity,
     Spacing,
-    ToTensord,
+    ToTensor,
 )
 from omegaconf import MISSING, OmegaConf
 from torch import optim
@@ -295,7 +295,7 @@ def run_inference(cfg: RunInferenceConfig):
                     spatial_size=TARGET_SPATIAL_SIZE,
                     mode="edge",
                 ),
-                ToTensord(),
+                ToTensor(),
             ]
         ),
     )
