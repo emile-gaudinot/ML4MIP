@@ -32,7 +32,7 @@ from ml4mip.dataset import (
     get_dataset,
     reshape_to_original,
 )
-
+from functools import partial
 import gc
 
 from ml4mip.graph_extraction import ExtractionConfig, extract_graph
@@ -377,7 +377,7 @@ class RunGraphExtractionConfig:
     input_dir: str = MISSING
     output_dir: str = MISSING
     num_workers: int = 4
-    extraction_cfg: ExtractionConfig = field(default_factory=ExtractionConfig)
+    extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
     max_samples: int | None = None
 
 
@@ -386,21 +386,31 @@ _cs.store(
     node=RunGraphExtractionConfig,
 )
 
+def handle_idx(idx, ds, cfg):
+    nifti_obj = ds[idx]
+    file_id = Path(nifti_obj.get_filename()).stem.split(".")[0]
+    path = Path(cfg.output_dir) / f"{file_id}.graph.json"
+    extract_graph(nifti_obj, cfg.extraction, path=path)
 
 @hydra.main(version_base=None, config_name="base_extraction_config")
 def run_graph_extraction(cfg: RunGraphExtractionConfig):
+    logger.info(OmegaConf.to_yaml(cfg))
+    cfg = OmegaConf.to_object(
+        cfg
+    )
     ds = UnlabeledDataset(
-        input_dir=cfg.input_dir,
+        data_dir=cfg.input_dir,
     )
 
     Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
-
-    def handle_idx(idx):
-        nifti_obj = ds[idx]
-        file_id = nifti_obj.get_filename().split(".")[0]
-        path = Path(cfg.output_dir) / f"{file_id}.graph.json"
-        extract_graph(nifti_obj, cfg.extraction_cfg, path=path)
-
     indices = range(len(ds)) if cfg.max_samples is None else range(cfg.max_samples)
+    
+    # Use functools.partial to pass `ds` and `cfg` to the function
+    handle_idx_partial = partial(handle_idx, ds=ds, cfg=cfg)
+    
+    batch_size=10
     with Pool(processes=cfg.num_workers) as pool:
-        pool.map(handle_idx, indices)
+        # Initialize tqdm for the progress bar
+        with tqdm(total=len(indices), desc="Processing") as pbar:
+            for _ in pool.imap_unordered(handle_idx_partial, indices, chunksize=batch_size):
+                pbar.update()
