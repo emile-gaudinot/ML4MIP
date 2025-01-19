@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import networkx as nx
+import nibabel as nib
 import numpy as np
 from scipy.ndimage import label
 from scipy.spatial import cKDTree
@@ -301,7 +302,27 @@ def extract_evenly_spaced_skeleton_points(reduced_graph, original_graph, spacing
     return skeleton_points
 
 
-def nodes_edges2json(d: dict, graph: nx.Graph):
+def compute_length(edge, graph: nx.Graph, id_, OUTPUT_DIR):
+    """Returns the length, in mm, of `edge`"""
+    # Get the coordinates of the nodes
+    node_a, node_b = edge
+    coord_a = np.array(graph.nodes[node_a]["coordinate"])
+    coord_b = np.array(graph.nodes[node_b]["coordinate"])
+
+    # Compute the voxel dimensions
+    nifti_pred = nib.load(OUTPUT_DIR / f"{id_}.pred.nii.gz")
+    voxel_dimensions = np.array(nifti_pred.header["pixdim"][1:4])
+
+    # Scale the coordinates by the voxel dimensions
+    scaled_coord_a = coord_a * voxel_dimensions
+    scaled_coord_b = coord_b * voxel_dimensions
+
+    # Compute the Euclidean distance in mm
+    distance_mm = np.linalg.norm(scaled_coord_a - scaled_coord_b)
+    return distance_mm
+
+
+def nodes_edges2json(d: dict, graph: nx.Graph, id_: str, OUTPUT_DIR):
     node_list = []
     nodes, edges = {}, {}
 
@@ -329,7 +350,9 @@ def nodes_edges2json(d: dict, graph: nx.Graph):
 
         # Transform the edge to the desired `edges` dict
         edges[i] = {
-            "length": 0,  # LENGTH STILL HAS TO BE COMPUTED
+            "length": compute_length(
+                edge, graph, id_, OUTPUT_DIR
+            ),  # LENGTH STILL HAS TO BE COMPUTED
             "skeletons": skeletons,
             "source": n1,
             "target": n2,
@@ -356,8 +379,8 @@ def convert_numpy_types(obj):
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
-def export2json(d: dict, graph: nx.Graph):
-    nodes, edges = nodes_edges2json(d, graph)
+def export2json(d: dict, graph: nx.Graph, id_, OUTPUT_DIR):
+    nodes, edges = nodes_edges2json(d, graph, id_, OUTPUT_DIR)
 
     # Create the final JSON
     json_dict = {

@@ -32,6 +32,9 @@ from ml4mip.dataset import (
     get_dataset,
     reshape_to_original,
 )
+
+import gc
+
 from ml4mip.graph_extraction import ExtractionConfig, extract_graph
 from ml4mip.loss import LossConfig, get_loss
 from ml4mip.models import ModelConfig, get_model
@@ -42,7 +45,7 @@ from ml4mip.utils.torch import load_checkpoint, save_model
 from ml4mip.visualize import visualize_model
 
 logger = logging.getLogger(__name__)
-
+import resource
 
 @dataclass
 class Config:
@@ -255,6 +258,24 @@ def run_validation(cfg: Config):
             )
 
 
+            
+def log_memory_usage():
+    """Logs the current CPU and GPU memory usage."""
+    # CPU memory usage
+    memory_usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    memory_usage_mb = memory_usage / 1024
+    logger.info(f"CPU memory usage: {memory_usage_mb:.2f} MB")
+    
+    # GPU memory usage (if CUDA is available)
+    if torch.cuda.is_available():
+        allocated = torch.cuda.memory_allocated() / 1024**2
+        reserved = torch.cuda.memory_reserved() / 1024**2
+        max_allocated = torch.cuda.max_memory_allocated() / 1024**2
+        max_reserved = torch.cuda.max_memory_reserved() / 1024**2
+
+        logger.info(f"GPU memory usage - Allocated: {allocated:.2f} MB, Reserved: {reserved:.2f} MB")
+        logger.info(f"GPU memory peak - Max Allocated: {max_allocated:.2f} MB, Max Reserved: {max_reserved:.2f} MB")
+        
 @dataclass
 class RunInferenceConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
@@ -274,6 +295,9 @@ _cs.store(
 @hydra.main(version_base=None, config_name="base_inference_config")
 def run_inference(cfg: RunInferenceConfig):
     logger.info(OmegaConf.to_yaml(cfg))
+    cfg = OmegaConf.to_object(
+        cfg
+    )
     logger.info("Starting inference script")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -283,7 +307,7 @@ def run_inference(cfg: RunInferenceConfig):
     model = model.to(device)
 
     ds = ImageDataset(
-        img_dir=cfg.input_dir,
+        data_dir=cfg.input_dir,
         transform=Compose(
             [
                 Spacing(
@@ -315,12 +339,13 @@ def run_inference(cfg: RunInferenceConfig):
     )
 
     for images in tqdm(dataloader):
+        log_memory_usage()
         images = images.to(device)
         with torch.no_grad():
             output = trainer.inference(
                 images=images,
                 model=model,
-                inference_cfg=cfg.inference,
+                cfg=cfg.inference,
             )
 
             # output is of shape (bs, c, h, w, d)
@@ -329,7 +354,15 @@ def run_inference(cfg: RunInferenceConfig):
                 pred = output[j]
                 binary_mask = pred >= 0.5
                 reshaped_mask = reshape_to_original(binary_mask)
-                save_output(reshaped_mask.squeeze(0).cpu(), meta_data=pred.meta)
+                reshaped_mask = reshaped_mask >= 0.5
+                save_output(reshaped_mask.squeeze(0).cpu().detach(), meta_data=pred.meta)
+                
+                del reshaped_mask, pred, binary_mask
+        
+        del output, images
+        # run python garbage collection and empty gpu cache to prevent full memory training stops
+        gc.collect()
+        torch.cuda.empty_cache()
 
     for file in Path(cfg.output_dir).glob("*_trans*"):
         # Remove 'label_trans.' from the filename

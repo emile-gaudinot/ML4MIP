@@ -486,7 +486,7 @@ class ImageDataset(Dataset):
         self.transform = transform
 
     def __len__(self):
-        return len(self.relevant_ids)
+        return len(self.image_files)
 
     def __getitem__(self, idx):
         return self.transform(self.loader(self.image_files[idx]))
@@ -979,7 +979,7 @@ def reshape_to_original(mask):
             ),
             ResizeWithPadOrCrop(
                 spatial_size=original_shape.tolist(),
-                mode="nearest",  # Use 'nearest' for binary segmentation masks
+                mode="edge",
             ),
         ]
     )(mask)
