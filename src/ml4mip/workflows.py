@@ -364,10 +364,9 @@ def run_graph_extraction(cfg: RunGraphExtractionConfig):
 
     def handle_idx(idx):
         nifti_obj = ds[idx]
-        binary_volume = nifti_obj.get_fdata()
         file_id = nifti_obj.get_filename().split(".")[0]
         path = Path(cfg.output_dir) / f"{file_id}.graph.json"
-        extract_graph(binary_volume, cfg.extraction_cfg, path=path)
+        extract_graph(nifti_obj, cfg.extraction_cfg, path=path)
 
     indices = range(len(ds)) if cfg.max_samples is None else range(cfg.max_samples)
     with Pool(processes=cfg.num_workers) as pool:

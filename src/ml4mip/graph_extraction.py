@@ -329,10 +329,10 @@ def nodes_edges2json(d: dict, graph: nx.Graph):
 
         # Transform the edge to the desired `edges` dict
         edges[i] = {
-            "length": 0, # LENGTH STILL HAS TO BE COMPUTED
+            "length": 0,  # LENGTH STILL HAS TO BE COMPUTED
             "skeletons": skeletons,
             "source": n1,
-            "target": n2
+            "target": n2,
         }
 
     # Add the nodes and their coordinates to the `nodes` dict
@@ -341,8 +341,8 @@ def nodes_edges2json(d: dict, graph: nx.Graph):
         coos = graph.nodes(data=True)[node]["coordinate"]
         nodes[i] = {
             "pos": list(coos),
-            "is_root": False, # WE STILL NEED TO DETERMINE THE ROOT
-            "id": node
+            "is_root": False,  # WE STILL NEED TO DETERMINE THE ROOT
+            "id": node,
         }
 
     return nodes, edges
@@ -363,11 +363,9 @@ def export2json(d: dict, graph: nx.Graph):
     json_dict = {
         "directed": True,
         "multigraph": False,
-        "graph": {
-            "coordinateSystem": "RAS"
-        },
+        "graph": {"coordinateSystem": "RAS"},
         "nodes": list(nodes.values()),
-        "edges": list(edges.values())
+        "edges": list(edges.values()),
     }
 
     # Export the dictionnary into JSON
@@ -384,9 +382,12 @@ class ExtractionConfig:
 
 
 def extract_graph(
-    binary_volume: np.ndarray, cfg: ExtractionConfig, path: str | Path | None
+    nifti_obj,
+    cfg: ExtractionConfig,
+    path: str | Path | None,
 ) -> tuple[nx.Graph, np.ndarray]:
     """Extract a reduced graph from a binary volume."""
+    binary_volume = nifti_obj.get_fdata()
     binary_volume = connected_component_distance_filter(
         binary_volume, min_size=cfg.min_size, max_dist=cfg.max_dist
     )
