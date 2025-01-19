@@ -328,21 +328,22 @@ def nodes_edges2json(d: dict, graph: nx.Graph, pixdim: np.ndarray):
 
         # Transform the skeleton of this edge into the desired `skeletons` dict
         skeletons = []
-        #for sk_node in d[edge]:
-        #    # Intermediate node
-        #    if type(sk_node) == str:
-        #        sk_node1, sk_node2 = int(sk_node.split("_")[1]), int(sk_node.split("_")[2])
-        #        coos1 = graph.nodes(data=True)[sk_node1]["coordinate"]
-        #        coos2 = graph.nodes(data=True)[sk_node2]["coordinate"]
-        #        if list(coos1) not in skeletons:
-        #            skeletons += [list(coos1)]
-        #        if list(coos2) not in skeletons:
-        #            skeletons += [list(coos2)]
-        #    # Not an intermediate node
-        #    else:
-        #        coos = graph.nodes(data=True)[sk_node]["coordinate"]
-        #        if list(coos) not in skeletons:
-        #            skeletons += [list(coos)]
+        for sk_node in d[edge]:
+            # Intermediate node
+            try:
+                if type(sk_node) == str:
+                    sk_node1, sk_node2 = int(sk_node.split("_")[1]), int(sk_node.split("_")[2])
+                    coos1 = graph.nodes[sk_node1]["coordinate"]
+                    coos2 = graph.nodes[sk_node2]["coordinate"]
+                    if list(coos1) not in skeletons:
+                        skeletons += [list(coos1)]
+                    if list(coos2) not in skeletons:
+                        skeletons += [list(coos2)]
+                # Not an intermediate node
+                else:
+                    coos = graph.nodes[sk_node]["coordinate"]
+                    if list(coos) not in skeletons:
+                        skeletons += [list(coos)]
 
         # Transform the edge to the desired `edges` dict
         edges[i] = {
@@ -420,7 +421,7 @@ def extract_graph(
             graph, merged_graph, spacing=cfg.spacing_skeleton
         )
         pixdim = np.array(nifti_obj.header["pixdim"][1:4])
-        json_dict = export2json(evenly_spaced_skeleton_points, graph, pixdim)
+        json_dict = export2json(evenly_spaced_skeleton_points, merged_graph, pixdim)
         with open(path, "w") as json_file:
             json.dump(json_dict, json_file, default=convert_numpy_types, indent=4)
         print("write file done:",path)
