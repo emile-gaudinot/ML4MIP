@@ -331,24 +331,6 @@ def nodes_edges2json(d: dict, graph: nx.Graph, final_graph: nx.Graph, pixdim: np
         # Transform the skeleton of this edge into the desired `skeletons` dict
         skeletons = []
         for sk_node in d[edge]:
-            # Intermediate node
-            # if type(sk_node) == str:
-            #     try:
-            #         sk_node = sk_node.replace('intermediate_intermediate', 'intermediate')
-            #         print(f'{graph.nodes[sk_node]["coordinate"] = }')
-            #         sk_node1, sk_node2 = int(sk_node.split("_")[1]), int(sk_node.split("_")[2])
-            #         coos1 = graph.nodes[sk_node1]["coordinate"]
-            #         coos2 = graph.nodes[sk_node2]["coordinate"]
-            #         if list(coos1) not in skeletons:
-            #             skeletons += [list(coos1)]
-            #         if list(coos2) not in skeletons:
-            #             skeletons += [list(coos2)]
-            #     except ValueError as e:
-            #         print(f'{sk_node = }')
-            #         print(f'{e = }')
-            #         raise ValueError
-            # Not an intermediate node
-            # else:
             coos = graph.nodes[sk_node]["coordinate"]
             if list(coos) not in skeletons:
                 skeletons += [list(coos)]
@@ -414,7 +396,6 @@ def export2json(d: dict, graph: nx.Graph, final_graph: nx.Graph, pixdim: np.ndar
     }
 
 
-
 @dataclass
 class ExtractionConfig:
     min_size: int = 100
@@ -439,7 +420,13 @@ def extract_graph(
     graph = reduce_graph(merged_graph)
     graph = merge_nodes(graph, distance_threshold=cfg.merge_nodes_distance)
     graph = reduce_graph(graph)
-
+    # determine root node and attach label
+    graph = determine_root_node(graph)
+    # orientate edges according to root nodes
+    graph = root_based_direct_graph(graph)
+    
+    graph = add_edge_length(graph)
+    
     if path is not None:
         evenly_spaced_skeleton_points = extract_evenly_spaced_skeleton_points(
             graph, merged_graph, spacing=cfg.spacing_skeleton
