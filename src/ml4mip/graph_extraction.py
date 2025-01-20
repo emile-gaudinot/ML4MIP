@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import networkx as nx
-import nibabel as nib
 import numpy as np
 from scipy.ndimage import label
 from scipy.spatial import cKDTree
@@ -269,122 +268,103 @@ def merge_to_two_components(graph):
     return graph
 
 
-def extract_evenly_spaced_skeleton_points(reduced_graph, original_graph, spacing=10):
-    """Extract evenly spaced skeleton points for each edge in the reduced graph.
-
-    Parameters:
-    reduced_graph (networkx.Graph): The reduced graph containing only endnodes and branching nodes.
-    original_graph (networkx.Graph): The original graph constructed from the skeleton.
-    spacing (int): The step size for selecting skeleton points.
-
-    Returns:
-    dict: A dictionary where keys are edges of the reduced graph, and values are lists of evenly spaced skeleton points.
-    """
-    skeleton_points = {}
-
+def add_skeleton2edges(reduced_graph, original_graph, spacing=10):
+    """Extract evenly spaced skeleton points for each edge in the reduced graph."""
     for edge in reduced_graph.edges():
-        # Extract the nodes of the edge
         start_node, end_node = edge
-
-        # Find the path in the original graph between the start and end nodes
         try:
             path = nx.shortest_path(original_graph, source=start_node, target=end_node)
         except nx.NetworkXNoPath:
-            print(f"No path found between {start_node} and {end_node}.")
+            logger.warning("No path found between %s and %s.", start_node, end_node)
             continue
 
-        # Select every `spacing`-th node along the path
-        evenly_spaced_points = path[::spacing]
+        nodes = path[::spacing]  # Extract every `spacing`-th node
+        reduced_graph.edges[edge]["skeletons"] = [
+            {"node": node, "coordinate": original_graph.nodes[node]["coordinate"]} for node in nodes
+        ]
 
-        # Store the result in the dictionary
-        skeleton_points[edge] = evenly_spaced_points
-
-    return skeleton_points
-
-
-def compute_length(edge, graph: nx.Graph, pixdim: np.ndarray):
-    """Returns the length, in mm, of `edge`"""
-    # Get the coordinates of the nodes
-    node_a, node_b = edge
-    coord_a = np.array(graph.nodes[node_a]["coordinate"])
-    coord_b = np.array(graph.nodes[node_b]["coordinate"])
-
-    # Scale the coordinates by the voxel dimensions
-    scaled_coord_a = coord_a * pixdim
-    scaled_coord_b = coord_b * pixdim
-
-    # Compute the Euclidean distance in mm
-    distance_mm = np.linalg.norm(scaled_coord_a - scaled_coord_b)
-    return distance_mm
+    return reduced_graph
 
 
-def nodes_edges2json(d: dict, graph: nx.Graph, final_graph: nx.Graph, pixdim: np.ndarray):
-    node_list = []
-    nodes, edges = {}, {}
-
-    for i, edge in enumerate(d.keys()):
-        n1, n2 = edge
-        # if type(n1) == str or type(n2) == str:
-        #     print(f'{n1 = }, {n2 = }')
-        node_list += [n1, n2]
-
-        # Transform the skeleton of this edge into the desired `skeletons` dict
-        skeletons = []
-        for sk_node in d[edge]:
-            coos = graph.nodes[sk_node]["coordinate"]
-            if list(coos) not in skeletons:
-                skeletons += [list(coos)]
-
-        # Transform the edge to the desired `edges` dict
-        edges[i] = {
-            "length": compute_length(
-                edge, graph, pixdim
-            ),
-            "skeletons": skeletons,
-            "source": n1,
-            "target": n2,
-        }
-        
+def determine_root_nodes(graph: nx.Graph):
+    """Determine the root nodes."""
     # Compute the root in each component
     # Find connected components
-    components = list(nx.connected_components(final_graph))
+    components = list(nx.connected_components(graph))
     assert len(components) == 2, "More than 2 components in final_graph"
     # Create subgraphs for each component
-    subgraphs = [final_graph.subgraph(cc).copy() for cc in components]
+    subgraphs = [graph.subgraph(cc).copy() for cc in components]
     root = [-1, -1]
     for i, cc in enumerate(subgraphs):
         z_max = -np.inf
         for node in cc.nodes:
-            _, _, z = cc.nodes[node]['coordinate']
+            _, _, z = cc.nodes[node]["coordinate"]
             if z > z_max:
                 z_max = z
                 root[i] = node
 
-    # Add the nodes and their coordinates to the `nodes` dict
-    node_list = list(set(node_list))
-    for i, node in enumerate(node_list):
-        # coos = graph.nodes[node]["coordinate"]
-        coos = graph.nodes(data=True)[node]["coordinate"]
-        is_root = node in root
-        nodes[i] = {
-            "pos": list(coos),
-            "is_root": is_root,
-            "id": node,
+    logger.info("Root nodes: %s", root)
+    for node in graph.nodes:
+        graph.nodes[node]["root"] = node in root
+
+
+def root_based_direct_graph(graph: nx.Graph):
+    """Orientate edges according to root nodes."""
+    # Find the root nodes
+    root_nodes = [node for node in graph.nodes if graph.nodes[node].get("root", False)]
+    assert len(root_nodes) == 2, "More than 2 root nodes found."
+
+    visited = set()
+    directed_edges = set()
+
+    def traverse_graph(node):
+        visited.add(node)
+        for neighbor in [n for n in graph.neighbors(node) if n not in visited]:
+            directed_edges.add((node, neighbor))
+            traverse_graph(neighbor)
+
+    for root_node in root_nodes:
+        traverse_graph(root_node)
+
+    # create a new directed graph
+    directed_graph = nx.DiGraph()
+    for u, v in directed_edges:
+        directed_graph.add_edge(u, v)
+
+    # copy the node attributes
+    for node in graph.nodes:
+        directed_graph.nodes[node].update(graph.nodes[node])
+
+    return directed_graph
+
+
+def add_edge_length(graph: nx.Graph, pixdim: np.ndarray):
+    for edge in graph.edges:
+        node_a, node_b = edge
+        scaled_coord_a = np.array(graph.nodes[node_a]["coordinate"]) * pixdim
+        scaled_coord_b = np.array(graph.nodes[node_b]["coordinate"]) * pixdim
+        graph.edges[edge]["length"] = np.linalg.norm(scaled_coord_a - scaled_coord_b)
+    return graph
+
+
+def export2json(graph: nx.Graph):
+    nodes, edges = {}, {}
+
+    for i, (n1, n2) in enumerate(graph.edges):
+        edge_data = graph[n1][n2]
+        edges[i] = {
+            "length": edge_data.get("length", None),
+            "skeletons": [list(skn["coordinate"]) for skn in edge_data.get("skeletons", [])],
+            "source": n1,
+            "target": n2,
         }
 
-    return nodes, edges
-
-
-def convert_numpy_types(obj):
-    if isinstance(obj, np.integer):
-        return int(obj)
-    if isinstance(obj, np.floating):
-        return float(obj)
-    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
-
-
-def export2json(d: dict, graph: nx.Graph, final_graph: nx.Graph, pixdim: np.ndarray):
-    nodes, edges = nodes_edges2json(d, graph, final_graph, pixdim)
+    for i, node in enumerate(graph.nodes):
+        nodes[i] = {
+            "pos": list(graph.nodes[node]["coordinate"]),
+            "is_root": graph.nodes[node].get("root", False),
+            "id": node,
+        }
 
     # Create the final JSON
     return {
@@ -394,6 +374,15 @@ def export2json(d: dict, graph: nx.Graph, final_graph: nx.Graph, pixdim: np.ndar
         "nodes": list(nodes.values()),
         "edges": list(edges.values()),
     }
+
+
+def convert_numpy_types(obj):
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    msg = f"Object of type {type(obj).__name__} is not JSON serializable"
+    raise TypeError(msg)
 
 
 @dataclass
@@ -411,7 +400,7 @@ def extract_graph(
 ) -> tuple[nx.Graph, np.ndarray]:
     """Extract a reduced graph from a binary volume."""
     binary_volume = nifti_obj.get_fdata()
-    binary_volume,_ = connected_component_distance_filter(
+    binary_volume, _ = connected_component_distance_filter(
         binary_volume, min_size=cfg.min_size, max_dist=cfg.max_dist
     )
     skeleton = skeletonize(binary_volume)
@@ -421,20 +410,17 @@ def extract_graph(
     graph = merge_nodes(graph, distance_threshold=cfg.merge_nodes_distance)
     graph = reduce_graph(graph)
     # determine root node and attach label
-    graph = determine_root_node(graph)
+    graph = determine_root_nodes(graph)
     # orientate edges according to root nodes
     graph = root_based_direct_graph(graph)
-    
-    graph = add_edge_length(graph)
-    
+    pixdim = np.array(nifti_obj.header["pixdim"][1:4])
+    graph = add_edge_length(graph, pixdim=pixdim)
+    graph = add_skeleton2edges(graph, merged_graph, spacing=cfg.spacing_skeleton)
+
     if path is not None:
-        evenly_spaced_skeleton_points = extract_evenly_spaced_skeleton_points(
-            graph, merged_graph, spacing=cfg.spacing_skeleton
-        )
-        pixdim = np.array(nifti_obj.header["pixdim"][1:4])
-        json_dict = export2json(evenly_spaced_skeleton_points, merged_graph, graph, pixdim)
+        json_dict = export2json(graph)
         with open(path, "w") as json_file:
             json.dump(json_dict, json_file, default=convert_numpy_types, indent=4)
-        print("write file done:",path)
+        print("write file done:", path)
 
     return graph, skeleton

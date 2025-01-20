@@ -1,6 +1,8 @@
+import gc
 import logging
 import sys
 from dataclasses import dataclass, field
+from functools import partial
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -32,9 +34,6 @@ from ml4mip.dataset import (
     get_dataset,
     reshape_to_original,
 )
-from functools import partial
-import gc
-
 from ml4mip.graph_extraction import ExtractionConfig, extract_graph
 from ml4mip.loss import LossConfig, get_loss
 from ml4mip.models import ModelConfig, get_model
@@ -46,6 +45,7 @@ from ml4mip.visualize import visualize_model
 
 logger = logging.getLogger(__name__)
 import resource
+
 
 @dataclass
 class Config:
@@ -258,14 +258,13 @@ def run_validation(cfg: Config):
             )
 
 
-            
 def log_memory_usage():
     """Logs the current CPU and GPU memory usage."""
     # CPU memory usage
     memory_usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     memory_usage_mb = memory_usage / 1024
     logger.info(f"CPU memory usage: {memory_usage_mb:.2f} MB")
-    
+
     # GPU memory usage (if CUDA is available)
     if torch.cuda.is_available():
         allocated = torch.cuda.memory_allocated() / 1024**2
@@ -273,9 +272,14 @@ def log_memory_usage():
         max_allocated = torch.cuda.max_memory_allocated() / 1024**2
         max_reserved = torch.cuda.max_memory_reserved() / 1024**2
 
-        logger.info(f"GPU memory usage - Allocated: {allocated:.2f} MB, Reserved: {reserved:.2f} MB")
-        logger.info(f"GPU memory peak - Max Allocated: {max_allocated:.2f} MB, Max Reserved: {max_reserved:.2f} MB")
-        
+        logger.info(
+            f"GPU memory usage - Allocated: {allocated:.2f} MB, Reserved: {reserved:.2f} MB"
+        )
+        logger.info(
+            f"GPU memory peak - Max Allocated: {max_allocated:.2f} MB, Max Reserved: {max_reserved:.2f} MB"
+        )
+
+
 @dataclass
 class RunInferenceConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
@@ -295,9 +299,7 @@ _cs.store(
 @hydra.main(version_base=None, config_name="base_inference_config")
 def run_inference(cfg: RunInferenceConfig):
     logger.info(OmegaConf.to_yaml(cfg))
-    cfg = OmegaConf.to_object(
-        cfg
-    )
+    cfg = OmegaConf.to_object(cfg)
     logger.info("Starting inference script")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -356,9 +358,9 @@ def run_inference(cfg: RunInferenceConfig):
                 reshaped_mask = reshape_to_original(binary_mask)
                 reshaped_mask = reshaped_mask >= 0.5
                 save_output(reshaped_mask.squeeze(0).cpu().detach(), meta_data=pred.meta)
-                
+
                 del reshaped_mask, pred, binary_mask
-        
+
         del output, images
         # run python garbage collection and empty gpu cache to prevent full memory training stops
         gc.collect()
@@ -386,31 +388,32 @@ _cs.store(
     node=RunGraphExtractionConfig,
 )
 
+
 def handle_idx(idx, ds, cfg):
     nifti_obj = ds[idx]
     file_id = Path(nifti_obj.get_filename()).stem.split(".")[0]
     path = Path(cfg.output_dir) / f"{file_id}.graph.json"
     extract_graph(nifti_obj, cfg.extraction, path=path)
 
+
 @hydra.main(version_base=None, config_name="base_extraction_config")
 def run_graph_extraction(cfg: RunGraphExtractionConfig):
     logger.info(OmegaConf.to_yaml(cfg))
-    cfg = OmegaConf.to_object(
-        cfg
-    )
+    cfg = OmegaConf.to_object(cfg)
     ds = UnlabeledDataset(
         data_dir=cfg.input_dir,
     )
 
     Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
     indices = range(len(ds)) if cfg.max_samples is None else range(cfg.max_samples)
-    
+
     # Use functools.partial to pass `ds` and `cfg` to the function
     handle_idx_partial = partial(handle_idx, ds=ds, cfg=cfg)
-    
-    batch_size=10
-    with Pool(processes=cfg.num_workers) as pool:
-        # Initialize tqdm for the progress bar
-        with tqdm(total=len(indices), desc="Processing") as pbar:
-            for _ in pool.imap_unordered(handle_idx_partial, indices, chunksize=batch_size):
-                pbar.update()
+
+    batch_size = 10
+    with (
+        Pool(processes=cfg.num_workers) as pool,
+        tqdm(total=len(indices), desc="Processing") as pbar,
+    ):
+        for _ in pool.imap_unordered(handle_idx_partial, indices, chunksize=batch_size):
+            pbar.update()
