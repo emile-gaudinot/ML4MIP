@@ -306,6 +306,8 @@ def determine_root_nodes(graph: nx.Graph):
     logger.info("Root nodes: %s", root)
     for node in graph.nodes:
         graph.nodes[node]["root"] = node in root
+    
+    return graph
 
 
 def root_based_direct_graph(graph: nx.Graph):
@@ -409,9 +411,7 @@ def extract_graph(
     graph = reduce_graph(merged_graph)
     graph = merge_nodes(graph, distance_threshold=cfg.merge_nodes_distance)
     graph = reduce_graph(graph)
-    # determine root node and attach label
     graph = determine_root_nodes(graph)
-    # orientate edges according to root nodes
     graph = root_based_direct_graph(graph)
     pixdim = np.array(nifti_obj.header["pixdim"][1:4])
     graph = add_edge_length(graph, pixdim=pixdim)
