@@ -318,49 +318,75 @@ def compute_length(edge, graph: nx.Graph, pixdim: np.ndarray):
     return distance_mm
 
 
-def nodes_edges2json(d: dict, graph: nx.Graph, pixdim: np.ndarray):
+def nodes_edges2json(d: dict, graph: nx.Graph, final_graph: nx.Graph, pixdim: np.ndarray):
     node_list = []
     nodes, edges = {}, {}
 
     for i, edge in enumerate(d.keys()):
         n1, n2 = edge
+        # if type(n1) == str or type(n2) == str:
+        #     print(f'{n1 = }, {n2 = }')
         node_list += [n1, n2]
 
         # Transform the skeleton of this edge into the desired `skeletons` dict
         skeletons = []
         for sk_node in d[edge]:
             # Intermediate node
-            if type(sk_node) == str:
-                sk_node1, sk_node2 = int(sk_node.split("_")[1]), int(sk_node.split("_")[2])
-                coos1 = graph.nodes[sk_node1]["coordinate"]
-                coos2 = graph.nodes[sk_node2]["coordinate"]
-                if list(coos1) not in skeletons:
-                    skeletons += [list(coos1)]
-                if list(coos2) not in skeletons:
-                    skeletons += [list(coos2)]
+            # if type(sk_node) == str:
+            #     try:
+            #         sk_node = sk_node.replace('intermediate_intermediate', 'intermediate')
+            #         print(f'{graph.nodes[sk_node]["coordinate"] = }')
+            #         sk_node1, sk_node2 = int(sk_node.split("_")[1]), int(sk_node.split("_")[2])
+            #         coos1 = graph.nodes[sk_node1]["coordinate"]
+            #         coos2 = graph.nodes[sk_node2]["coordinate"]
+            #         if list(coos1) not in skeletons:
+            #             skeletons += [list(coos1)]
+            #         if list(coos2) not in skeletons:
+            #             skeletons += [list(coos2)]
+            #     except ValueError as e:
+            #         print(f'{sk_node = }')
+            #         print(f'{e = }')
+            #         raise ValueError
             # Not an intermediate node
-            else:
-                coos = graph.nodes[sk_node]["coordinate"]
-                if list(coos) not in skeletons:
-                    skeletons += [list(coos)]
+            # else:
+            coos = graph.nodes[sk_node]["coordinate"]
+            if list(coos) not in skeletons:
+                skeletons += [list(coos)]
 
         # Transform the edge to the desired `edges` dict
         edges[i] = {
             "length": compute_length(
                 edge, graph, pixdim
-            ),  # LENGTH STILL HAS TO BE COMPUTED
+            ),
             "skeletons": skeletons,
             "source": n1,
             "target": n2,
         }
+        
+    # Compute the root in each component
+    # Find connected components
+    components = list(nx.connected_components(final_graph))
+    assert len(components) == 2, "More than 2 components in final_graph"
+    # Create subgraphs for each component
+    subgraphs = [final_graph.subgraph(cc).copy() for cc in components]
+    root = [-1, -1]
+    for i, cc in enumerate(subgraphs):
+        z_max = -np.inf
+        for node in cc.nodes:
+            _, _, z = cc.nodes[node]['coordinate']
+            if z > z_max:
+                z_max = z
+                root[i] = node
 
     # Add the nodes and their coordinates to the `nodes` dict
-    node_list = sorted(list(set(node_list)))
+    node_list = list(set(node_list))
     for i, node in enumerate(node_list):
+        # coos = graph.nodes[node]["coordinate"]
         coos = graph.nodes(data=True)[node]["coordinate"]
+        is_root = node in root
         nodes[i] = {
             "pos": list(coos),
-            "is_root": False,  # WE STILL NEED TO DETERMINE THE ROOT
+            "is_root": is_root,
             "id": node,
         }
 
@@ -375,8 +401,8 @@ def convert_numpy_types(obj):
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
-def export2json(d: dict, graph: nx.Graph, pixdim: np.ndarray):
-    nodes, edges = nodes_edges2json(d, graph, pixdim)
+def export2json(d: dict, graph: nx.Graph, final_graph: nx.Graph, pixdim: np.ndarray):
+    nodes, edges = nodes_edges2json(d, graph, final_graph, pixdim)
 
     # Create the final JSON
     return {
@@ -387,7 +413,6 @@ def export2json(d: dict, graph: nx.Graph, pixdim: np.ndarray):
         "edges": list(edges.values()),
     }
 
-    
 
 
 @dataclass
@@ -420,7 +445,7 @@ def extract_graph(
             graph, merged_graph, spacing=cfg.spacing_skeleton
         )
         pixdim = np.array(nifti_obj.header["pixdim"][1:4])
-        json_dict = export2json(evenly_spaced_skeleton_points, merged_graph, pixdim)
+        json_dict = export2json(evenly_spaced_skeleton_points, merged_graph, graph, pixdim)
         with open(path, "w") as json_file:
             json.dump(json_dict, json_file, default=convert_numpy_types, indent=4)
         print("write file done:",path)
