@@ -1,5 +1,6 @@
 import gc
 import logging
+import resource
 import sys
 from dataclasses import dataclass, field
 from functools import partial
@@ -9,7 +10,9 @@ from pathlib import Path
 import hydra
 import mlflow
 import mlflow.pytorch
+import nibabel as nib
 import torch
+from graph_extraction import connected_component_distance_filter
 from hydra.core.config_store import ConfigStore
 from monai.transforms import (
     Compose,
@@ -44,7 +47,6 @@ from ml4mip.utils.torch import load_checkpoint, save_model
 from ml4mip.visualize import visualize_model
 
 logger = logging.getLogger(__name__)
-import resource
 
 
 @dataclass
@@ -417,5 +419,66 @@ def run_graph_extraction(cfg: RunGraphExtractionConfig):
     ):
         for _ in pool.imap_unordered(handle_idx_partial, indices, chunksize=cfg.batch_size):
             pbar.update()
-    
+
+    logger.info("Done")
+
+
+@dataclass
+class PostprocessingConfig:
+    input_dir: str = MISSING
+    output_dir: str = MISSING
+    num_workers: int = 4
+    batch_size: int = 5
+    min_size: int = 1
+    max_distance: int = 0
+    n_largest: int = 3
+    max_samples: int | None = None
+
+
+_cs.store(
+    name="base_postprocessing_config",
+    node=PostprocessingConfig,
+)
+
+
+def postprocess_segmentation(idx, ds, cfg):
+    nifti_obj = ds[idx]
+    file_id = Path(nifti_obj.get_filename()).stem.split(".")[0]
+
+    binary_volume = nifti_obj.get_fdata()
+    processed_volume = connected_component_distance_filter(
+        binary_volume,
+        cfg.min_size,
+        cfg.max_distance,
+        cfg.n_largest,
+    )
+
+    # Create a new NIfTI image with the processed data
+    new_nifti_obj = nib.Nifti1Image(processed_volume, nifti_obj.affine, nifti_obj.header)
+
+    # Save the new NIfTI file
+    output_path = Path(cfg.output_dir) / f"{file_id}.label.nii.gz"
+    nib.save(new_nifti_obj, str(output_path))
+
+
+def run_post_processing(cfg: PostprocessingConfig):
+    logger.info(OmegaConf.to_yaml(cfg))
+    cfg = OmegaConf.to_object(cfg)
+    ds = UnlabeledDataset(
+        data_dir=cfg.input_dir,
+    )
+
+    Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
+    indices = range(len(ds)) if cfg.max_samples is None else range(cfg.max_samples)
+
+    # Use functools.partial to pass `ds` and `cfg` to the function
+    handle_idx_partial = partial(postprocess_segmentation, ds=ds, cfg=cfg)
+
+    with (
+        Pool(processes=cfg.num_workers) as pool,
+        tqdm(total=len(indices), desc="Processing") as pbar,
+    ):
+        for _ in pool.imap_unordered(handle_idx_partial, indices, chunksize=cfg.batch_size):
+            pbar.update()
+
     logger.info("Done")

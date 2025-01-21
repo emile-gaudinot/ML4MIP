@@ -5,7 +5,7 @@ from pathlib import Path
 
 import networkx as nx
 import numpy as np
-from scipy.ndimage import label, distance_transform_edt
+from scipy.ndimage import label
 from scipy.spatial import cKDTree
 from skimage.morphology import skeletonize
 
@@ -27,6 +27,7 @@ def compute_minimum_distances(component_points, valid_labels):
 
     return distances
 
+
 def compute_distances_to_largest(component_points, valid_labels, n_largest=5):
     # Get the n_largest components based on component size
     component_sizes = [len(component_points[label]) for label in valid_labels]
@@ -40,7 +41,7 @@ def compute_distances_to_largest(component_points, valid_labels, n_largest=5):
     for i, label in enumerate(valid_labels):
         points_a = component_points[label]
         tree_a = cKDTree(points_a)
-        
+
         # For each of the n_largest components, compute the minimum distance
         for j, largest_label in enumerate(largest_labels):
             points_b = component_points[largest_label]
@@ -57,7 +58,7 @@ def connected_component_distance_filter(pred, min_size=300, max_dist=50, n_large
     component_sizes[0] = 0  # Remove background size
     valid_labels = np.where(component_sizes >= min_size)[0]
     component_points = {label: np.argwhere(labeled_array == label) for label in valid_labels}
-    distances = compute_minimum_distances(component_points, valid_labels)
+    # distances = compute_minimum_distances(component_points, valid_labels) # old
     distances = compute_distances_to_largest(component_points, valid_labels, n_largest=n_largest)
     min_distances = distances.min(axis=1) <= max_dist
 
@@ -329,8 +330,9 @@ def determine_root_nodes(graph: nx.Graph):
     logger.info("Root nodes: %s", root)
     for node in graph.nodes:
         graph.nodes[node]["root"] = node in root
-    
+
     return graph
+
 
 def determine_root_nodes_high_center(graph: nx.Graph, spatial_size: np.ndarray):
     components = list(nx.connected_components(graph))
@@ -349,12 +351,13 @@ def determine_root_nodes_high_center(graph: nx.Graph, spatial_size: np.ndarray):
             if distance < min_distance:
                 min_distance = distance
                 root[i] = node  # Store the node with the minimal distance
-    
+
     logger.info("Root nodes: %s", root)
     for node in graph.nodes:
         graph.nodes[node]["root"] = node in root
-    
+
     return graph
+
 
 def root_based_direct_graph(graph: nx.Graph):
     """Orientate edges according to root nodes."""
@@ -433,58 +436,7 @@ def convert_numpy_types(obj):
         return float(obj)
     msg = f"Object of type {type(obj).__name__} is not JSON serializable"
     raise TypeError(msg)
-    
-def postprocessing_binary_volume(volume, min_size, max_distance, n_largest):
-    """
-    Filters connected components in a binary volume based on size and distance to the largest n components.
 
-    Parameters:
-        volume (np.ndarray): Input binary volume (3D array) where non-zero voxels belong to components.
-        min_size (int): Minimum size for connected components to retain.
-        max_distance (float): Maximum allowable distance to the largest n components.
-        n_largest (int): Number of largest components to consider for distance calculation.
-
-    Returns:
-        np.ndarray: Filtered binary volume.
-    """
-    # Label connected components in the volume
-    labeled_volume, num_features = label(volume)
-
-    if num_features < n_largest:
-        # If there are fewer components than n_largest, retain only those >= min_size
-        component_sizes = np.bincount(labeled_volume.ravel())[1:]  # Exclude background (label 0)
-        large_components = [i + 1 for i, size in enumerate(component_sizes) if size >= min_size]
-        return np.isin(labeled_volume, large_components).astype(np.uint8), n_largest
-
-    # Get sizes of all components
-    component_sizes = np.bincount(labeled_volume.ravel())[1:]  # Exclude background (label 0)
-
-    # Sort components by size (largest first)
-    sorted_indices = np.argsort(component_sizes)[::-1]
-
-    # Create binary masks for the largest n components
-    distance_transforms = []
-    for i in range(min(n_largest, len(sorted_indices))):
-        label_idx = sorted_indices[i] + 1
-        component_mask = labeled_volume == label_idx
-        distance_transforms.append(distance_transform_edt(~component_mask))
-
-    # Filter components based on size and distance
-    filtered_volume = np.zeros_like(volume, dtype=np.uint8)
-
-    for label_idx in range(1, num_features + 1):
-        component_mask = labeled_volume == label_idx
-        component_size = component_sizes[label_idx - 1]
-
-        # Skip components smaller than min_size
-        if component_size < min_size:
-            continue
-
-        # Check if any voxel is within max_distance of any of the largest n components
-        if any(np.any(dt[component_mask] <= max_distance) for dt in distance_transforms):
-            filtered_volume[component_mask] = 1
-
-    return filtered_volume, n_largest
 
 def translate_to_world_coords(graph: nx.Graph, affine: np.ndarray):
     for node in graph.nodes:
@@ -494,6 +446,7 @@ def translate_to_world_coords(graph: nx.Graph, affine: np.ndarray):
         graph.nodes[node]["coordinate"] = tuple(world_coord[:3])  # Store as a tuple
     return graph
 
+
 @dataclass
 class ExtractionConfig:
     min_size: int = 1
@@ -501,7 +454,7 @@ class ExtractionConfig:
     n_largest: int = 3
     merge_nodes_distance: int = 10
     spacing_skeleton: int = 7
-    
+
 
 def extract_graph(
     nifti_obj,
@@ -510,8 +463,12 @@ def extract_graph(
 ) -> tuple[nx.Graph, np.ndarray]:
     """Extract a reduced graph from a binary volume."""
     binary_volume = nifti_obj.get_fdata()
-    # binary_volume, _ = postprocessing_binary_volume(binary_volume, min_size=cfg.min_size, max_distance=cfg.max_distance, n_largest=cfg.n_largest)
-    binary_volume, _ = connected_component_distance_filter(binary_volume, min_size=cfg.min_size, max_dist=cfg.max_distance, n_largest=cfg.n_largest)
+    binary_volume, _ = connected_component_distance_filter(
+        binary_volume,
+        min_size=cfg.min_size,
+        max_dist=cfg.max_distance,
+        n_largest=cfg.n_largest,
+    )
     skeleton = skeletonize(binary_volume)
     graph = skeleton_to_graph(skeleton)
     merged_graph = merge_to_two_components(graph)
