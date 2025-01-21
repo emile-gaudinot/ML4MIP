@@ -975,11 +975,11 @@ def reshape_to_original(mask):
         [
             Spacing(
                 pixdim=original_pixel_spacing[1:4].tolist(),
-                mode="nearest",
+                mode="bilinear",
             ),
             ResizeWithPadOrCrop(
                 spatial_size=original_shape.tolist(),
-                mode="edge",
+                mode="constant",
             ),
         ]
     )(mask)
