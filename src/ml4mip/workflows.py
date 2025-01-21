@@ -379,6 +379,7 @@ class RunGraphExtractionConfig:
     input_dir: str = MISSING
     output_dir: str = MISSING
     num_workers: int = 4
+    batch_size: int = 5
     extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
     max_samples: int | None = None
 
@@ -410,10 +411,11 @@ def run_graph_extraction(cfg: RunGraphExtractionConfig):
     # Use functools.partial to pass `ds` and `cfg` to the function
     handle_idx_partial = partial(handle_idx, ds=ds, cfg=cfg)
 
-    batch_size = 10
     with (
         Pool(processes=cfg.num_workers) as pool,
         tqdm(total=len(indices), desc="Processing") as pbar,
     ):
-        for _ in pool.imap_unordered(handle_idx_partial, indices, chunksize=batch_size):
+        for _ in pool.imap_unordered(handle_idx_partial, indices, chunksize=cfg.batch_size):
             pbar.update()
+    
+    logger.info("Done")

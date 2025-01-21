@@ -5,7 +5,7 @@ from pathlib import Path
 
 import networkx as nx
 import numpy as np
-from scipy.ndimage import label
+from scipy.ndimage import label, distance_transform_edt
 from scipy.spatial import cKDTree
 from skimage.morphology import skeletonize
 
@@ -27,8 +27,30 @@ def compute_minimum_distances(component_points, valid_labels):
 
     return distances
 
+def compute_distances_to_largest(component_points, valid_labels, n_largest=5):
+    # Get the n_largest components based on component size
+    component_sizes = [len(component_points[label]) for label in valid_labels]
+    sorted_labels = np.argsort(component_sizes)[::-1]  # Sort by size, descending
+    largest_labels = [valid_labels[i] for i in sorted_labels[:n_largest]]
 
-def connected_component_distance_filter(pred, min_size=300, max_dist=50):
+    # Initialize a matrix to store the distances to the n_largest components
+    distances = np.inf * np.ones((len(valid_labels), n_largest))  # Infinite distance initially
+
+    # Compute distances for each component
+    for i, label in enumerate(valid_labels):
+        points_a = component_points[label]
+        tree_a = cKDTree(points_a)
+        
+        # For each of the n_largest components, compute the minimum distance
+        for j, largest_label in enumerate(largest_labels):
+            points_b = component_points[largest_label]
+            # Query the nearest point in points_b for each point in points_a
+            distances[i, j] = tree_a.query(points_b, k=1)[0].min()
+
+    return distances
+
+
+def connected_component_distance_filter(pred, min_size=300, max_dist=50, n_largest=5):
     structure = np.ones((3, 3, 3), dtype=np.int64)  # Define connectivity (6, 18, or 26)
     labeled_array, _ = label(pred, structure=structure)
     component_sizes = np.bincount(labeled_array.ravel())
@@ -36,6 +58,7 @@ def connected_component_distance_filter(pred, min_size=300, max_dist=50):
     valid_labels = np.where(component_sizes >= min_size)[0]
     component_points = {label: np.argwhere(labeled_array == label) for label in valid_labels}
     distances = compute_minimum_distances(component_points, valid_labels)
+    distances = compute_distances_to_largest(component_points, valid_labels, n_largest=n_largest)
     min_distances = distances.min(axis=1) <= max_dist
 
     to_keep = valid_labels[min_distances]
@@ -309,6 +332,29 @@ def determine_root_nodes(graph: nx.Graph):
     
     return graph
 
+def determine_root_nodes_high_center(graph: nx.Graph, spatial_size: np.ndarray):
+    components = list(nx.connected_components(graph))
+    assert len(components) == 2, "More than 2 components in final_graph"
+    # Create subgraphs for each component
+    subgraphs = [graph.subgraph(cc).copy() for cc in components]
+    root = [-1, -1]
+    highest_central_point = np.array([spatial_size[0] / 2, spatial_size[1] / 2, spatial_size[2]])
+    for i, subgraph in enumerate(subgraphs):
+        min_distance = np.inf
+        for node in subgraph.nodes:
+            # Get the coordinate of the node
+            node_coord = np.array(subgraph.nodes[node]["coordinate"])
+            # Compute the Euclidean distance to the highest central point
+            distance = np.linalg.norm(node_coord - highest_central_point)
+            if distance < min_distance:
+                min_distance = distance
+                root[i] = node  # Store the node with the minimal distance
+    
+    logger.info("Root nodes: %s", root)
+    for node in graph.nodes:
+        graph.nodes[node]["root"] = node in root
+    
+    return graph
 
 def root_based_direct_graph(graph: nx.Graph):
     """Orientate edges according to root nodes."""
@@ -345,7 +391,9 @@ def add_edge_length(graph: nx.Graph, pixdim: np.ndarray):
         node_a, node_b = edge
         scaled_coord_a = np.array(graph.nodes[node_a]["coordinate"]) * pixdim
         scaled_coord_b = np.array(graph.nodes[node_b]["coordinate"]) * pixdim
-        graph.edges[edge]["length"] = np.linalg.norm(scaled_coord_a - scaled_coord_b)
+        length = np.linalg.norm(scaled_coord_a - scaled_coord_b)
+        print(length)
+        graph.edges[edge]["length"] = length
     return graph
 
 
@@ -385,15 +433,75 @@ def convert_numpy_types(obj):
         return float(obj)
     msg = f"Object of type {type(obj).__name__} is not JSON serializable"
     raise TypeError(msg)
+    
+def postprocessing_binary_volume(volume, min_size, max_distance, n_largest):
+    """
+    Filters connected components in a binary volume based on size and distance to the largest n components.
 
+    Parameters:
+        volume (np.ndarray): Input binary volume (3D array) where non-zero voxels belong to components.
+        min_size (int): Minimum size for connected components to retain.
+        max_distance (float): Maximum allowable distance to the largest n components.
+        n_largest (int): Number of largest components to consider for distance calculation.
+
+    Returns:
+        np.ndarray: Filtered binary volume.
+    """
+    # Label connected components in the volume
+    labeled_volume, num_features = label(volume)
+
+    if num_features < n_largest:
+        # If there are fewer components than n_largest, retain only those >= min_size
+        component_sizes = np.bincount(labeled_volume.ravel())[1:]  # Exclude background (label 0)
+        large_components = [i + 1 for i, size in enumerate(component_sizes) if size >= min_size]
+        return np.isin(labeled_volume, large_components).astype(np.uint8), n_largest
+
+    # Get sizes of all components
+    component_sizes = np.bincount(labeled_volume.ravel())[1:]  # Exclude background (label 0)
+
+    # Sort components by size (largest first)
+    sorted_indices = np.argsort(component_sizes)[::-1]
+
+    # Create binary masks for the largest n components
+    distance_transforms = []
+    for i in range(min(n_largest, len(sorted_indices))):
+        label_idx = sorted_indices[i] + 1
+        component_mask = labeled_volume == label_idx
+        distance_transforms.append(distance_transform_edt(~component_mask))
+
+    # Filter components based on size and distance
+    filtered_volume = np.zeros_like(volume, dtype=np.uint8)
+
+    for label_idx in range(1, num_features + 1):
+        component_mask = labeled_volume == label_idx
+        component_size = component_sizes[label_idx - 1]
+
+        # Skip components smaller than min_size
+        if component_size < min_size:
+            continue
+
+        # Check if any voxel is within max_distance of any of the largest n components
+        if any(np.any(dt[component_mask] <= max_distance) for dt in distance_transforms):
+            filtered_volume[component_mask] = 1
+
+    return filtered_volume, n_largest
+
+def translate_to_world_coords(graph: nx.Graph, affine: np.ndarray):
+    for node in graph.nodes:
+        voxel_coord = np.array(graph.nodes[node]["coordinate"])
+        homogeneous_voxel = np.append(voxel_coord, 1)  # [x, y, z, 1]
+        world_coord = affine @ homogeneous_voxel
+        graph.nodes[node]["coordinate"] = tuple(world_coord[:3])  # Store as a tuple
+    return graph
 
 @dataclass
 class ExtractionConfig:
-    min_size: int = 100
-    max_dist: int = 100
+    min_size: int = 1
+    max_distance: int = 0
+    n_largest: int = 3
     merge_nodes_distance: int = 10
     spacing_skeleton: int = 7
-
+    
 
 def extract_graph(
     nifti_obj,
@@ -402,9 +510,8 @@ def extract_graph(
 ) -> tuple[nx.Graph, np.ndarray]:
     """Extract a reduced graph from a binary volume."""
     binary_volume = nifti_obj.get_fdata()
-    binary_volume, _ = connected_component_distance_filter(
-        binary_volume, min_size=cfg.min_size, max_dist=cfg.max_dist
-    )
+    # binary_volume, _ = postprocessing_binary_volume(binary_volume, min_size=cfg.min_size, max_distance=cfg.max_distance, n_largest=cfg.n_largest)
+    binary_volume, _ = connected_component_distance_filter(binary_volume, min_size=cfg.min_size, max_dist=cfg.max_distance, n_largest=cfg.n_largest)
     skeleton = skeletonize(binary_volume)
     graph = skeleton_to_graph(skeleton)
     merged_graph = merge_to_two_components(graph)
@@ -412,10 +519,12 @@ def extract_graph(
     graph = merge_nodes(graph, distance_threshold=cfg.merge_nodes_distance)
     graph = reduce_graph(graph)
     graph = determine_root_nodes(graph)
+    # graph = determine_root_nodes_high_center(graph, binary_volume.shape) # v4 causes problem
     graph = root_based_direct_graph(graph)
     pixdim = np.array(nifti_obj.header["pixdim"][1:4])
     graph = add_edge_length(graph, pixdim=pixdim)
     graph = add_skeleton2edges(graph, merged_graph, spacing=cfg.spacing_skeleton)
+    graph = translate_to_world_coords(graph, nifti_obj.affine)
 
     if path is not None:
         json_dict = export2json(graph)
