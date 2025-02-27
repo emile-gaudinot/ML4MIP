@@ -17,7 +17,7 @@ ML4MIP uses `pyproject.toml` for dependency management. To install the project a
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-repo/ml4mip.git
+git clone git@github.com:pvmeng/ML4MIP.git
 cd ml4mip
 
 # Create and activate a virtual environment (optional but recommended)
