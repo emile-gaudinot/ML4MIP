@@ -173,5 +173,13 @@ For dataset settings and advanced configurations, refer to `conf/config.yaml`.
 ## Logging and Experiment Tracking
 ML4MIP integrates with MLFlow for tracking experiments. Logs, model checkpoints, and evaluation metrics are stored under `ml_flow_uri`, which can be set in the configuration.
 
+## Repository Structure
+
+```bash
+src/          # Main codebase for pipeline components and workflows  
+experiments/  # Jupytext notebooks for various experimental analyses  
+
+```
+
 
 
