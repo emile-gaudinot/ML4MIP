@@ -1,7 +1,9 @@
 # ML4MIP: Machine Learning for Medical Image Processing
 
 ## Overview
-ML4MIP is a machine learning framework designed for medical image processing tasks such as training, validation, inference, preprocessing, postprocessing, and graph extraction. The project is built around a structured workflow and utilizes the Hydra configuration manager for flexible configuration handling.
+ML4MIP is a machine learning framework designed for medical image processing tasks, including training, validation, inference, preprocessing, postprocessing, and graph extraction. It utilizes the Hydra configuration manager for flexible configuration handling.
+
+The project focuses on employing deep learning models such as UNETR, UNet, MedSAM, and nnU-Net to segment coronary arteries in CTA images, and then extract graph-based representations of coronary structures. This effort aims to enhance the early detection of coronary artery disease (CAD), a significant global health issue, as well as the treatment planning. CAD is characterized by the narrowing of coronary vessels due to plaque buildup, leading to reduced blood flow and serious health events.
 
 ## Features
 - **Training**: Train deep learning models on medical imaging datasets.
@@ -181,5 +183,22 @@ experiments/  # Jupytext notebooks for various experimental analyses
 
 ```
 
+## U-Net architecture
 
+```mermaid
+flowchart LR
+    %% Skip connections
+    C -- skip1 --> I
+    D -- skip2 --> H
+    E -- skip3 --> G
 
+    A[**Input**<br/>*1 channel*] --> B[firstBlock<br/>*Conv3d → BatchNorm3d → ReLU*]
+    B --> C[**en1**<br/>*Conv3d → BatchNorm3d → ReL*U]
+    C --> D[**en2**<br/>*MaxPool3d → #40;Conv3d → BatchNorm3d → ReLU#41; ×2*]
+    D --> E[**en3**<br/>*MaxPool3d → #40;Conv3d → BatchNorm3d → ReLU#41; ×2*]
+    E --> F[**valley**<br/>*MaxPool3d → #40;Conv3d → BatchNorm3d → ReLU#41; ×2 → ConvTranspose3d*]
+    F --> G[**dec1**<br/*>*#40;Conv3d → BatchNorm3d → ReLU#41; ×2 → ConvTranspose3d*]
+    G --> H[**dec2**<br/>*#40;Conv3d → BatchNorm3d → ReLU#41; ×2 → ConvTranspose3d*]
+    H --> I[**dec3**<br/>*#40;Conv3d → BatchNorm3d → ReLU#41; ×2 → Conv3d*]
+    I --> J[**Output**<br/>*Raw score*]
+```

@@ -84,7 +84,11 @@ _cs.store(
     config_name="config",
 )
 def run_training(cfg: Config) -> None:
-    """Prepare data, model, and training loop for fine-tuning."""
+    """
+    Prepare data, model, and training loop for fine-tuning.
+    Args:
+        cfg: Config object containing all training parameters and settings.
+    """
     logger.info(OmegaConf.to_yaml(cfg))
     cfg = OmegaConf.to_object(
         cfg
@@ -203,6 +207,11 @@ def run_training(cfg: Config) -> None:
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def run_validation(cfg: Config):
+    """
+    Run model validation on the validation dataset and log results.
+    Args:
+        cfg: Config object containing all validation parameters and settings.
+    """
     logger.info(OmegaConf.to_yaml(cfg))
     cfg = OmegaConf.to_object(
         cfg
@@ -261,7 +270,9 @@ def run_validation(cfg: Config):
 
 
 def log_memory_usage():
-    """Logs the current CPU and GPU memory usage."""
+    """
+    Logs the current CPU and GPU memory usage.
+    """
     # CPU memory usage
     memory_usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     memory_usage_mb = memory_usage / 1024
@@ -300,6 +311,11 @@ _cs.store(
 
 @hydra.main(version_base=None, config_name="base_inference_config")
 def run_inference(cfg: RunInferenceConfig):
+    """
+    Run inference on a dataset using a trained model and save the predictions.
+    Args:
+        cfg: RunInferenceConfig object containing inference parameters and settings.
+    """
     logger.info(OmegaConf.to_yaml(cfg))
     cfg = OmegaConf.to_object(cfg)
     logger.info("Starting inference script")
@@ -393,6 +409,13 @@ _cs.store(
 
 
 def handle_idx(idx, ds, cfg):
+    """
+    Extract a graph from a NIfTI object and save it as a JSON file.
+    Args:
+        idx: Index of the sample in the dataset.
+        ds: Dataset object.
+        cfg: RunGraphExtractionConfig object with extraction settings.
+    """
     nifti_obj = ds[idx]
     file_id = Path(nifti_obj.get_filename()).stem.split(".")[0]
     path = Path(cfg.output_dir) / f"{file_id}.graph.json"
@@ -401,6 +424,11 @@ def handle_idx(idx, ds, cfg):
 
 @hydra.main(version_base=None, config_name="base_extraction_config")
 def run_graph_extraction(cfg: RunGraphExtractionConfig):
+    """
+    Run graph extraction on a dataset and save the results as JSON files.
+    Args:
+        cfg: RunGraphExtractionConfig object containing extraction parameters and settings.
+    """
     logger.info(OmegaConf.to_yaml(cfg))
     cfg = OmegaConf.to_object(cfg)
     ds = UnlabeledDataset(
@@ -442,6 +470,13 @@ _cs.store(
 
 
 def postprocess_segmentation(idx, ds, cfg):
+    """
+    Apply postprocessing to a segmentation mask and save the processed result.
+    Args:
+        idx: Index of the sample in the dataset.
+        ds: Dataset object.
+        cfg: PostprocessingConfig object with postprocessing settings.
+    """
     nifti_obj = ds[idx]
     file_id = Path(nifti_obj.get_filename()).stem.split(".")[0]
 
@@ -462,6 +497,11 @@ def postprocess_segmentation(idx, ds, cfg):
 
 
 def run_post_processing(cfg: PostprocessingConfig):
+    """
+    Run postprocessing on a dataset and save the processed segmentation masks.
+    Args:
+        cfg: PostprocessingConfig object containing postprocessing parameters and settings.
+    """
     logger.info(OmegaConf.to_yaml(cfg))
     cfg = OmegaConf.to_object(cfg)
     ds = UnlabeledDataset(

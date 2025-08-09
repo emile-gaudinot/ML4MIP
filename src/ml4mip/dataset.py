@@ -154,10 +154,12 @@ class ABCNiftiDataset(Dataset, ABC):
         pass
 
     def __len__(self) -> int:
+        """Return the number of image files in the dataset."""
         image_files, _ = self.get_image_mask_files()
         return len(image_files)
 
     def init_cache(self):
+        """Initialize the cache by preloading and transforming all images and masks."""
         image_files, _ = self.get_image_mask_files()
         if self.cache_pooling != 0:
             result = np.array_split(range(len(image_files)), self.cache_pooling)
@@ -175,7 +177,13 @@ class ABCNiftiDataset(Dataset, ABC):
     def process_samples(
         self, indices: int | list[int]
     ) -> tuple[MetaTensor, MetaTensor] | tuple[list[MetaTensor], list[MetaTensor]]:
-        """Apply the transformation to the image and mask files."""
+        """
+        Apply the transformation to the image and mask files for the given indices.
+        Args:
+            indices: Single index or list of indices to process.
+        Returns:
+            Tuple of (images, masks) as lists if multiple indices, or single image and mask if one index.
+        """
         return_as_list = True
         if not isinstance(indices, list):
             return_as_list = False
@@ -214,6 +222,13 @@ class ABCNiftiDataset(Dataset, ABC):
         # Alternatively use len(output_list) > 1, but could result in unexpected behavior
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Retrieve the image and mask tensors for the given index, using cache if enabled.
+        Args:
+            idx: Index of the sample to retrieve.
+        Returns:
+            Tuple of (image, mask) tensors.
+        """
         return (
             (
                 self.image_cache[idx],
@@ -227,6 +242,16 @@ class ABCNiftiDataset(Dataset, ABC):
     def load_image_mask_files(
         image_regex: str, mask_regex: str, image_dir: Path, mask_dir: Path
     ) -> tuple[list[Path], list[Path]]:
+        """
+        Load and return sorted lists of image and mask file paths matching the given regex patterns.
+        Args:
+            image_regex: Glob pattern for image files.
+            mask_regex: Glob pattern for mask files.
+            image_dir: Directory containing image files.
+            mask_dir: Directory containing mask files.
+        Returns:
+            Tuple of (image_files, mask_files) as sorted lists of Paths.
+        """
         return (sorted(image_dir.glob(image_regex)), sorted(mask_dir.glob(mask_regex)))
 
     @staticmethod
@@ -238,6 +263,18 @@ class ABCNiftiDataset(Dataset, ABC):
         image_affix,
         mask_affix,
     ):
+        """
+        Check that image and mask files exist, match in number, and have matching names.
+        Args:
+            image_files: List of image file paths.
+            mask_files: List of mask file paths.
+            data_dir: Directory containing image files.
+            mask_dir: Directory containing mask files.
+            image_affix: Tuple of image file prefix and suffix.
+            mask_affix: Tuple of mask file prefix and suffix.
+        Raises:
+            ValueError if files are missing or do not match.
+        """
         if len(image_files) == 0:
             msg = f"No image files found. {data_dir}"
             raise ValueError(msg)

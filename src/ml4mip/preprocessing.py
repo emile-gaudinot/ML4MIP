@@ -23,6 +23,17 @@ def create_patches(
     image_affix,
     mask_affix,
 ):
+    """
+    Create and save multiple patches from a given image and mask using a specified transform.
+    Args:
+        image: The input image (with metadata).
+        mask: The corresponding mask (with metadata).
+        transform: The transformation to apply for patch extraction.
+        n_patches: Number of patches to create.
+        output_dir: Directory to save the patches.
+        image_affix: Tuple of prefix and suffix for image filenames.
+        mask_affix: Tuple of prefix and suffix for mask filenames.
+    """
     # 1) get name and remove affixes for clean output names
     if image.meta.get("filename_or_obj", None) is None:
         msg = "Image does not have a filename"
@@ -80,6 +91,17 @@ def process_subset(
     image_affix,
     mask_affix,
 ):
+    """
+    Process a subset of dataset indices, creating and saving patches for each sample.
+    Args:
+        index_subset: List of indices to process from the dataset.
+        base_dataset: The dataset object to sample from.
+        post_transforms: Transformations to apply after base transforms.
+        n_patches: Number of patches to create per sample.
+        output_dir: Directory to save the patches.
+        image_affix: Tuple of prefix and suffix for image filenames.
+        mask_affix: Tuple of prefix and suffix for mask filenames.
+    """
     logger.info("Processing subset: %s", index_subset)
     for i in range(len(index_subset)):
         local_img, local_msk = base_dataset[index_subset[i]]
@@ -112,6 +134,11 @@ _cs.store(
 
 @hydra.main(version_base=None, config_path="conf", config_name="preprocessing_config")
 def main(cfg: PreprocessingConfig):
+    """
+    Main entry point for the preprocessing script. Loads configuration, prepares transforms and dataset, and launches patch extraction in parallel.
+    Args:
+        cfg: PreprocessingConfig object containing all preprocessing parameters.
+    """
     logger.info(OmegaConf.to_yaml(cfg))
     cfg = OmegaConf.to_object(
         cfg
