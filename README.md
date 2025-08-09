@@ -1,9 +1,9 @@
 # ML4MIP: Machine Learning for Medical Image Processing
 
 ## Overview
-ML4MIP is a machine learning framework designed for medical image processing tasks, including training, validation, inference, preprocessing, postprocessing, and graph extraction. It utilizes the Hydra configuration manager for flexible configuration handling.
+ML4MIP focuses on employing deep learning models such as UNETR, UNet, MedSAM, and nnU-Net to segment coronary arteries in CTA images, and then extract graph-based representations of coronary structures. This effort aims to enhance the early detection of coronary artery disease (CAD) - the most common cause of mortality in developed countries - as well as the treatment planning for the patients. CAD is characterized by the narrowing of coronary vessels due to plaque buildup, leading to reduced blood flow and serious health events.
 
-The project focuses on employing deep learning models such as UNETR, UNet, MedSAM, and nnU-Net to segment coronary arteries in CTA images, and then extract graph-based representations of coronary structures. This effort aims to enhance the early detection of coronary artery disease (CAD), a significant global health issue, as well as the treatment planning. CAD is characterized by the narrowing of coronary vessels due to plaque buildup, leading to reduced blood flow and serious health events.
+ML4MIP is a machine learning framework, including training, validation, inference, preprocessing, postprocessing, and graph extraction. It utilizes the Hydra configuration manager for flexible configuration handling.
 
 ## Features
 - **Training**: Train deep learning models on medical imaging datasets.
