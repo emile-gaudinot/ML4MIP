@@ -5,10 +5,8 @@ ML4MIP focuses on employing deep learning models such as UNETR, UNet, MedSAM, an
 
 ML4MIP is a machine learning framework, including training, validation, inference, preprocessing, postprocessing, and graph extraction. It utilizes the Hydra configuration manager for flexible configuration handling.
 
-<div style="display: flex; justify-content: space-between;">
-  <img src="report/img/segmentation-vs-gt.png" alt="Segmentation" style="width: 50%;">
-  <img src="report/img/segmentation_graph.png" alt="Graph extraction" style="width: 50%;">
-</div>
+<img src="report/img/segmentation-vs-gt.png" alt="Segmentation" width="50%" height="50%">
+<img src="report/img/segmentation_graph.png" alt="Graph extraction" width="50%" height="50%">
 
 ## Features
 - **Training**: Train deep learning models on medical imaging datasets.
